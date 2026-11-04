@@ -11,6 +11,23 @@ def test_gui_plus_tool_call():
     assert action["coordinate"] == [120, 400]
 
 
+def test_gui_plus_missing_open_tag():
+    text = (
+        '{"name":"mobile_use","arguments":{"action":"click","coordinate": [388, 914]}}\n'
+        "</tool_call>"
+    )
+    action = normalize_action(text)
+    assert action["action"] == "click"
+    assert action["coordinate"] == [388, 914]
+
+
+def test_truncated_click_json():
+    text = '{"action":"click","coordinate": [387, 909]'
+    action = normalize_action(text)
+    assert action["action"] == "click"
+    assert action["coordinate"] == [387, 909]
+
+
 def test_glm_json():
     action = normalize_action('{"action":"click","coordinate":[10,20]}')
     assert action["coordinate"] == [10, 20]

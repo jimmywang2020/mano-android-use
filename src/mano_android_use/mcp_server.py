@@ -155,6 +155,31 @@ def journal_tail(n: int = 20) -> str:
     return _dumps(_session().journal_tail(int(n)))
 
 
+@mcp.tool()
+def android_run(
+    goal: str,
+    max_steps: int = 25,
+    model: str = "",
+    package: str = "",
+) -> str:
+    """B-path: run a bounded observe→propose→act loop toward a natural-language goal.
+
+    Uses the same L0 session, safety gateway, and GUI grounder as the fine-grained
+    tools. Prefer this when the host should not orchestrate every tap. Stops on
+    payment/submit screens, policy blocks, repeated actions, errors, or budget.
+    """
+    from .run_loop import android_run as _android_run
+
+    result = _android_run(
+        _session(),
+        goal,
+        max_steps=int(max_steps),
+        model=model or None,
+        package=package or None,
+    )
+    return _dumps(result.to_dict())
+
+
 def main() -> None:
     # stdio transport for Cursor / Codex MCP hosts.
     mcp.run(transport="stdio")

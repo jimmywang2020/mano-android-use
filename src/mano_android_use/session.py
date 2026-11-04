@@ -289,3 +289,7 @@ class DeviceSession:
 
     def journal_tail(self, n: int = 20) -> list[dict[str, Any]]:
         return self._journal[-n:]
+
+    def log_event(self, row: dict[str, Any]) -> None:
+        """Public journal append for higher-level loops (android_run)."""
+        self._log(row)

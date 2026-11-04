@@ -79,7 +79,19 @@ Cursor UI（2026）：**Customize → MCPs → New MCP Server**（不是只在�
 | Cursor | | | |
 | Codex | | | |
 
+## Phase 6 — B-path `android_run(goal)` (no LangGraph)
+
+```bash
+eval "$(bash scripts/mumu-adb.sh)"
+uv run pytest -q tests/test_run_loop.py
+uv run mau run "打开设置" --max-steps 8
+```
+
+- [x] unit tests green
+- [x] CLI `mau run` returns a terminal status (`GOAL_REACHED` / `NEED_HUMAN` / `BLOCKED_BY_POLICY` / `STUCK` / `BUDGET_EXCEEDED` / `ERROR`)
+- [x] MCP tool `android_run` listed after reconnect (host can call same loop)
+- [x] Payment/submit still stops the loop (`NEED_HUMAN` / `BLOCKED_BY_POLICY`) — Airbnb 预订页 `NEED_HUMAN`，未点击
+
 ## Later
 
-- Phase 6: `android_run(goal)` (B)
 - Phase 7+: Pack crystal / WeChat / cloud device

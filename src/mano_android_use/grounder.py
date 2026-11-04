@@ -20,9 +20,8 @@ from mano.action_codec import parse_tool_call
 from mano.errors import ManoError, ManoNetworkError
 from mano.gui_plus_client import GuiVLM, endpoint_from_base
 from mano.media import image_data_url
-from mano.runner import propose_action
-
 # Production-supported model ids (configurable).
+
 SUPPORTED_MODELS = (
     "gui-plus",
     "gui-plus-2026-02-26",
@@ -146,19 +145,70 @@ class Grounder:
             return GrounderResult(False, self.model, None, "", f"missing image: {image}")
         try:
             if self.model.startswith("gui-plus"):
-                raw, action = propose_action(
-                    self._client, image, SYSTEM_GUI_PLUS, instruction
-                )
+                raw, action = self._propose_gui_plus(image, instruction)
                 return GrounderResult(True, self.model, action, raw)
             raw, action = self._propose_glm_style(image, instruction)
             return GrounderResult(True, self.model, action, raw)
         except ManoError as exc:
             return GrounderResult(False, self.model, None, "", str(exc)[:800])
 
+    def _propose_gui_plus(self, image: Path, instruction: str) -> tuple[str, dict[str, Any]]:
+        """Like mano.runner.propose_action but parse via normalize_action.
+
+        gui-plus sometimes omits the opening ``<tool_call>`` tag while still
+        returning valid mobile_use JSON + ``</tool_call>``. Large MuMu
+        screenshots are downscaled to reduce truncated completions.
+        """
+        prepared = _prepare_image_for_vlm(image)
+        messages: list[dict[str, Any]] = [
+            {"role": "system", "content": SYSTEM_GUI_PLUS},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": instruction},
+                    {"type": "image_url", "image_url": {"url": image_data_url(prepared)}},
+                ],
+            },
+        ]
+        last_err: Exception | None = None
+        text = ""
+        for attempt in range(3):
+            try:
+                response = self._client.complete(messages, max_tokens=900)
+            except ManoError as exc:
+                last_err = exc
+                if attempt < 2 and isinstance(exc, ManoNetworkError):
+                    self._client.retries += 1
+                    time.sleep(2**attempt)
+                    continue
+                raise
+            text = self._client.content(response)
+            try:
+                return text, normalize_action(text)
+            except ManoError as exc:
+                last_err = exc
+                if attempt == 2:
+                    break
+                messages.extend(
+                    [
+                        {"role": "assistant", "content": text},
+                        {
+                            "role": "user",
+                            "content": (
+                                f"Parse error: {str(exc)[:500]}. "
+                                "Return exactly one corrected "
+                                '<tool_call>{"name":"mobile_use","arguments":{...}}</tool_call>.'
+                            ),
+                        },
+                    ]
+                )
+                self._client.retries += 1
+        raise ManoError(f"VLM returned an unparseable action 3 times in a row: {last_err}")
+
     def _propose_glm_style(self, image: Path, instruction: str) -> tuple[str, dict[str, Any]]:
         # Zhipu free VL often rejects Aliyun-only fields / very large PNG payloads
         # (Broken pipe). Downscale + lean OpenAI-compatible body.
-        prepared = _prepare_image_for_zhipu(image)
+        prepared = _prepare_image_for_vlm(image)
         data_url = image_data_url(prepared) if prepared.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"} else (
             "data:image/png;base64," + base64.b64encode(prepared.read_bytes()).decode("ascii")
         )
@@ -251,15 +301,15 @@ class Grounder:
         return result
 
 
-def _prepare_image_for_zhipu(image: Path, *, max_edge: int = 1280) -> Path:
-    """Downscale large screenshots to reduce Broken-pipe / payload failures."""
+def _prepare_image_for_vlm(image: Path, *, max_edge: int = 1280) -> Path:
+    """Downscale large screenshots to reduce payload / truncated-completion failures."""
     image = Path(image)
     if image.stat().st_size < 900_000:
         return image
     sips = shutil.which("sips")
     if not sips:
         return image
-    tmp = Path(tempfile.mkdtemp(prefix="mau-zhipu-")) / f"resized{image.suffix or '.png'}"
+    tmp = Path(tempfile.mkdtemp(prefix="mau-vlm-")) / f"resized{image.suffix or '.png'}"
     try:
         subprocess.run(
             [sips, "-Z", str(max_edge), str(image), "--out", str(tmp)],
@@ -273,6 +323,10 @@ def _prepare_image_for_zhipu(image: Path, *, max_edge: int = 1280) -> Path:
     return image
 
 
+# Back-compat alias for older imports/tests.
+_prepare_image_for_zhipu = _prepare_image_for_vlm
+
+
 _JSON_RE = re.compile(r"\{.*\}", re.S)
 _BBOX_RE = re.compile(
     r"\[\[\s*([0-9.]+)\s*,\s*([0-9.]+)\s*,\s*([0-9.]+)\s*,\s*([0-9.]+)\s*\]\]"
@@ -280,27 +334,89 @@ _BBOX_RE = re.compile(
 
 
 def _loads_action_json(raw: str) -> dict[str, Any]:
-    """Parse model JSON; tolerate trailing commas common in glm-4.6v-flash output."""
+    """Parse model JSON; tolerate trailing commas and truncated closers."""
     cleaned = raw.strip()
     cleaned = re.sub(r",\s*([}\]])", r"\1", cleaned)
-    return json.loads(cleaned)
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        repaired = _repair_truncated_json(cleaned)
+        if repaired is None:
+            raise
+        return json.loads(repaired)
+
+
+def _repair_truncated_json(raw: str) -> str | None:
+    """Close missing ``]`` / ``}`` when the model cuts mid-object.
+
+    Example: ``{"action":"click","coordinate": [387, 909]`` → append ``]}``.
+    """
+    s = raw.rstrip()
+    if not s.startswith("{"):
+        # Keep only from the first object start if present.
+        idx = s.find("{")
+        if idx < 0:
+            return None
+        s = s[idx:]
+    open_braces = s.count("{") - s.count("}")
+    open_brackets = s.count("[") - s.count("]")
+    if open_braces < 0 or open_brackets < 0:
+        return None
+    if open_braces == 0 and open_brackets == 0:
+        return None
+    candidate = s + ("]" * open_brackets) + ("}" * open_braces)
+    candidate = re.sub(r",\s*([}\]])", r"\1", candidate)
+    try:
+        json.loads(candidate)
+    except json.JSONDecodeError:
+        return None
+    return candidate
+
+
+def _iter_json_objects(text: str) -> list[str]:
+    """Yield top-level `{...}` slices (supports one level of nesting)."""
+    out: list[str] = []
+    i = 0
+    while i < len(text):
+        if text[i] != "{":
+            i += 1
+            continue
+        depth = 0
+        for j in range(i, len(text)):
+            if text[j] == "{":
+                depth += 1
+            elif text[j] == "}":
+                depth -= 1
+                if depth == 0:
+                    out.append(text[i : j + 1])
+                    i = j + 1
+                    break
+        else:
+            break
+    return out
 
 
 def normalize_action(text: str) -> dict[str, Any]:
     """Normalize gui-plus tool_call or GLM JSON / bbox into mano action dict."""
     text = text.strip()
+    # Models sometimes emit JSON + closing tag without the opening <tool_call>.
+    if "</tool_call>" in text and "<tool_call>" not in text:
+        text = "<tool_call>" + text
     # Prefer mano tool_call if present.
     if "<tool_call>" in text:
-        return parse_tool_call(text)
+        try:
+            return parse_tool_call(text)
+        except ManoError:
+            # Fall through: strip tags and parse JSON envelope.
+            text = re.sub(r"</?tool_call>", "", text).strip()
 
     # Fenced json
     if "```" in text:
         text = re.sub(r"```(?:json)?", "", text).replace("```", "").strip()
 
-    # Prefer the first object that looks like an action (models often narrate after).
-    for match in re.finditer(r"\{[^{}]*\}", text, re.S):
-        candidate = match.group(0)
-        if "action" not in candidate:
+    # Nested envelopes e.g. {"name":"mobile_use","arguments":{"action":...}}
+    for candidate in _iter_json_objects(text):
+        if "action" not in candidate and "arguments" not in candidate:
             continue
         try:
             obj = _loads_action_json(candidate)
@@ -311,6 +427,14 @@ def normalize_action(text: str) -> dict[str, Any]:
         except ManoError:
             continue
 
+    # Truncated object without a closing brace (not yielded by _iter_json_objects).
+    if "{" in text and "action" in text:
+        try:
+            obj = _loads_action_json(text[text.find("{") :])
+            return _from_obj(obj)
+        except (json.JSONDecodeError, ManoError):
+            pass
+
     match = _JSON_RE.search(text)
     if match:
         try:
@@ -318,6 +442,18 @@ def normalize_action(text: str) -> dict[str, Any]:
         except json.JSONDecodeError as exc:
             raise ManoError(f"invalid action JSON: {exc}") from exc
         return _from_obj(obj)
+
+    # Last-resort: pull a click coordinate even from a chopped string.
+    coord = re.search(
+        r'"action"\s*:\s*"click".*?"coordinate"\s*:\s*\[\s*([0-9.]+)\s*,\s*([0-9.]+)',
+        text,
+        re.S,
+    )
+    if coord:
+        return {
+            "action": "click",
+            "coordinate": [float(coord.group(1)), float(coord.group(2))],
+        }
 
     bbox = _BBOX_RE.search(text)
     if bbox:

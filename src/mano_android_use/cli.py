@@ -42,6 +42,11 @@ def main(argv: list[str] | None = None) -> int:
     p_prop.add_argument("instruction")
     p_prop.add_argument("--model", default=os.getenv("MAU_GROUNDER_MODEL", ""))
     p_prop.add_argument("--image", default="", help="Existing PNG path; else observe first")
+    p_run = sub.add_parser("run", help="B-path: bounded android_run(goal) loop")
+    p_run.add_argument("goal", help="Natural-language goal")
+    p_run.add_argument("--max-steps", type=int, default=25)
+    p_run.add_argument("--model", default=os.getenv("MAU_GROUNDER_MODEL", ""))
+    p_run.add_argument("--package", default="", help="Optional cold-start package before loop")
 
     args = parser.parse_args(argv)
 
@@ -101,6 +106,18 @@ def main(argv: list[str] | None = None) -> int:
             )
         _print(out)
         return 0 if result.ok else 1
+    if args.cmd == "run":
+        from .run_loop import TERMINAL_OK, android_run
+
+        result = android_run(
+            session,
+            args.goal,
+            max_steps=args.max_steps,
+            model=args.model or None,
+            package=args.package or None,
+        )
+        _print(result.to_dict())
+        return 0 if result.status == TERMINAL_OK else 1
 
     return 2
 

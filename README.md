@@ -27,6 +27,7 @@ CLI auto-loads `.env`. Switch models without editing keys:
 ```bash
 uv run mau propose "..."                           # uses MAU_GROUNDER_MODEL (gui-plus by default)
 uv run mau propose "..." --model glm-4.6v-flash    # uses ZHIPU_API_KEY automatically
+uv run mau run "打开设置" --max-steps 8            # B-path: bounded android_run loop
 ```
 
 Fallback without uv:
@@ -60,6 +61,7 @@ USB device: `export MANO_DEVICE_SERIAL=<serial from adb devices>` yourself.
 | `uv run mau tap X Y` / `type` / `press` | Act |
 | `uv run mau launch PACKAGE` | Cold start |
 | `uv run mau propose "instruction" [--model ...]` | Grounder |
+| `uv run mau run "goal" [--max-steps N] [--model ...] [--package ...]` | B-path: bounded `android_run` |
 
 ## MCP (Cursor + Codex)
 
@@ -76,7 +78,7 @@ Prefer the MuMu wrapper (auto-detect serial, no `16384` in config).
 
 Codex: [`examples/mcp.codex.toml.example`](examples/mcp.codex.toml.example)。
 
-Tools: `doctor`, `ready`, `observe`, `find`, `launch_app`, `tap`, `swipe`, `type_text`, `press_button`, `propose_action`, `journal_tail`.
+Tools: `doctor`, `ready`, `observe`, `find`, `launch_app`, `tap`, `swipe`, `type_text`, `press_button`, `propose_action`, `journal_tail`, `android_run`.
 
 ## Grounder models
 
@@ -98,5 +100,5 @@ scripts/
   mumu-adb.sh              # from mano Core — auto-detect MuMu ADB
   mau-mcp-with-mumu.sh     # MCP entry: detect then exec mau-mcp
 src/mano_android_use/
-  session.py grounder.py safety.py tree.py mcp_server.py cli.py
+  session.py grounder.py safety.py tree.py run_loop.py mcp_server.py cli.py
 ```
