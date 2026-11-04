@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mano-android-use"
+version = "0.1.0"
+description = "Android MCP Agent tools (A′): host orchestrates, GUI VLM grounds, mano executes."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{ name = "jimmywang2020" }]
+dependencies = [
+  "mano @ git+https://github.com/jimmywang2020/mano.git@v0.1.2",
+  "mcp>=1.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+mau = "mano_android_use.cli:main"
+mau-mcp = "mano_android_use.mcp_server:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
