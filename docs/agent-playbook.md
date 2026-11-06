@@ -44,9 +44,16 @@ Update `~/.cursor/mcp.json` `env.MANO_DEVICE_SERIAL` the same way; bump `MCP_REV
 | Goal | Tool |
 |------|------|
 | Health / tips | `ready` |
-| One-shot UI goal | `android_run` |
+| One-shot UI goal | `android_run` (+ optional `success_check`) |
 | Fine-grained | `observe` → `find` / `tap` / `swipe` / `type_text` |
 | Debug journal | `journal_tail` |
+
+## success_check (prefer for “正确”)
+
+Pass `success_package` / `success_labels_any` / `success_labels_all` so
+`GOAL_REACHED` requires an external screen assertion, not only model terminate.
+
+Example: [docs/examples/ctrip-beijing-homestay.md](examples/ctrip-beijing-homestay.md).
 
 ## Out of scope for mau
 

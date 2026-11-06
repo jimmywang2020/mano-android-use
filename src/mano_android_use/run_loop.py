@@ -12,6 +12,7 @@ from typing import Any
 
 from .grounder import Grounder, pixel_from_normalized
 from .session import DeviceSession
+from .success_check import SuccessCheck, evaluate_success
 from .tips import build_tips
 
 
@@ -37,6 +38,8 @@ class RunResult:
     history: list[dict[str, Any]] = field(default_factory=list)
     tips: list[str] = field(default_factory=list)
     screen: dict[str, Any] | None = None
+    success_check: dict[str, Any] | None = None
+    success_verdict: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         out = {
@@ -55,6 +58,10 @@ class RunResult:
             out["tips"] = self.tips
         if self.screen is not None:
             out["screen"] = self.screen
+        if self.success_check is not None:
+            out["success_check"] = self.success_check
+        if self.success_verdict is not None:
+            out["success_verdict"] = self.success_verdict
         return out
 
 
@@ -67,15 +74,31 @@ def _action_fingerprint(action: dict[str, Any] | None, mapped: dict[str, Any] | 
     return f"{kind}:{action.get('coordinate')}:{action.get('text')}:{action.get('button')}"
 
 
-def _instruction(goal: str, summary: str, step: int, max_steps: int) -> str:
-    return (
-        f"User goal: {goal}\n"
-        f"Step {step}/{max_steps}. Current screen summary: {summary}\n"
+def _instruction(
+    goal: str,
+    summary: str,
+    step: int,
+    max_steps: int,
+    *,
+    success_check: SuccessCheck | None = None,
+    check_feedback: str = "",
+) -> str:
+    parts = [
+        f"User goal: {goal}",
+        f"Step {step}/{max_steps}. Current screen summary: {summary}",
         "Propose the single next UI action toward the goal. "
         "If the goal is already achieved, return "
         '{"action":"terminate","status":"success"}. '
-        "Never pay, confirm payment, or submit an order."
-    )
+        "Never pay, confirm payment, or submit an order.",
+    ]
+    if success_check and not success_check.is_empty():
+        parts.append(
+            "External success_check (must hold before success is accepted): "
+            + str(success_check.to_dict())
+        )
+    if check_feedback:
+        parts.append(f"Previous terminate rejected: {check_feedback}. Continue toward the goal.")
+    return "\n".join(parts)
 
 
 def android_run(
@@ -86,9 +109,19 @@ def android_run(
     model: str | None = None,
     package: str | None = None,
     stuck_repeat: int = 3,
+    success_check: SuccessCheck | dict[str, Any] | None = None,
 ) -> RunResult:
-    """Run a bounded observe→propose→act loop toward ``goal``."""
+    """Run a bounded observe→propose→act loop toward ``goal``.
+
+    Optional ``success_check`` (package / labels_any / labels_all) is an external
+    verifier: early-stop when the screen matches; veto model ``terminate:success``
+    when it does not.
+    """
     goal = (goal or "").strip()
+    if isinstance(success_check, dict):
+        success_check = SuccessCheck.from_mapping(success_check)
+    check_dict = success_check.to_dict() if isinstance(success_check, SuccessCheck) else None
+
     if not goal:
         return RunResult(
             status=TERMINAL_ERROR,
@@ -99,6 +132,7 @@ def android_run(
             run_dir=str(session.run_dir),
             reason="empty goal",
             tips=build_tips(include_playbook=True),
+            success_check=check_dict,
         )
 
     # Consumer preflight: try one wake; still off → NEED_HUMAN (no Core change).
@@ -140,6 +174,29 @@ def android_run(
     recent: list[str] = []
     last_summary = ""
     last_package = ""
+    check_feedback = ""
+
+    def _result(
+        status: str,
+        *,
+        steps: int,
+        reason: str,
+        verdict: dict[str, Any] | None = None,
+    ) -> RunResult:
+        return RunResult(
+            status=status,
+            goal=goal,
+            steps=steps,
+            model=grounder.model,
+            run_id=session.run_id,
+            run_dir=str(session.run_dir),
+            last_summary=last_summary,
+            package=last_package,
+            reason=reason,
+            history=history,
+            success_check=check_dict,
+            success_verdict=verdict,
+        )
 
     for step in range(1, max_steps + 1):
         obs = session.observe(detail="tree")
@@ -157,23 +214,47 @@ def android_run(
             entry["stop"] = TERMINAL_HUMAN
             history.append(entry)
             session.log_event({"event": "android_run_stop", "status": TERMINAL_HUMAN, "step": step})
-            return RunResult(
-                status=TERMINAL_HUMAN,
-                goal=goal,
+            return _result(
+                TERMINAL_HUMAN,
                 steps=step,
-                model=grounder.model,
-                run_id=session.run_id,
-                run_dir=str(session.run_dir),
-                last_summary=last_summary,
-                package=last_package,
                 reason=str(safety.get("reason") or "payment/submit UI"),
-                history=history,
             )
+
+        # External verifier: screen already matches → success without model terminate.
+        if success_check and not success_check.is_empty():
+            verdict = evaluate_success(
+                success_check,
+                package=last_package,
+                summary=last_summary,
+                xml=session.last_xml or "",
+            )
+            entry["success_check"] = verdict.to_dict()
+            if verdict.ok:
+                entry["stop"] = TERMINAL_OK
+                history.append(entry)
+                session.log_event(
+                    {"event": "android_run_stop", "status": TERMINAL_OK, "step": step, "via": "success_check"}
+                )
+                return _result(
+                    TERMINAL_OK,
+                    steps=step,
+                    reason="success_check satisfied",
+                    verdict=verdict.to_dict(),
+                )
 
         image = Path(obs["screenshot_path"])
         proposed = grounder.propose(
-            image, _instruction(goal, last_summary, step, max_steps)
+            image,
+            _instruction(
+                goal,
+                last_summary,
+                step,
+                max_steps,
+                success_check=success_check if isinstance(success_check, SuccessCheck) else None,
+                check_feedback=check_feedback,
+            ),
         )
+        check_feedback = ""
         entry["propose"] = {
             "ok": proposed.ok,
             "model": proposed.model,
@@ -183,40 +264,46 @@ def android_run(
         if not proposed.ok or not proposed.action:
             entry["stop"] = TERMINAL_ERROR
             history.append(entry)
-            return RunResult(
-                status=TERMINAL_ERROR,
-                goal=goal,
+            return _result(
+                TERMINAL_ERROR,
                 steps=step,
-                model=grounder.model,
-                run_id=session.run_id,
-                run_dir=str(session.run_dir),
-                last_summary=last_summary,
-                package=last_package,
                 reason=proposed.error or "propose failed",
-                history=history,
             )
 
         action = proposed.action
         if action.get("action") == "terminate":
-            status = (
-                TERMINAL_OK
-                if str(action.get("status") or "").lower() == "success"
-                else TERMINAL_STUCK
-            )
+            want_ok = str(action.get("status") or "").lower() == "success"
+            if want_ok and success_check and not success_check.is_empty():
+                verdict = evaluate_success(
+                    success_check,
+                    package=last_package,
+                    summary=last_summary,
+                    xml=session.last_xml or "",
+                )
+                entry["success_check"] = verdict.to_dict()
+                if not verdict.ok:
+                    # Veto false success; keep looping with feedback.
+                    check_feedback = "; ".join(verdict.reasons) or "success_check failed"
+                    entry["terminate_vetoed"] = True
+                    history.append(entry)
+                    continue
+                entry["stop"] = TERMINAL_OK
+                history.append(entry)
+                session.log_event({"event": "android_run_stop", "status": TERMINAL_OK, "step": step})
+                return _result(
+                    TERMINAL_OK,
+                    steps=step,
+                    reason="terminate:success+success_check",
+                    verdict=verdict.to_dict(),
+                )
+            status = TERMINAL_OK if want_ok else TERMINAL_STUCK
             entry["stop"] = status
             history.append(entry)
             session.log_event({"event": "android_run_stop", "status": status, "step": step})
-            return RunResult(
-                status=status,
-                goal=goal,
+            return _result(
+                status,
                 steps=step,
-                model=grounder.model,
-                run_id=session.run_id,
-                run_dir=str(session.run_dir),
-                last_summary=last_summary,
-                package=last_package,
                 reason=f"terminate:{action.get('status')}",
-                history=history,
             )
 
         w, h = session.last_size
@@ -227,17 +314,10 @@ def android_run(
         if len(recent) >= stuck_repeat and len(set(recent[-stuck_repeat:])) == 1:
             entry["stop"] = TERMINAL_STUCK
             history.append(entry)
-            return RunResult(
-                status=TERMINAL_STUCK,
-                goal=goal,
+            return _result(
+                TERMINAL_STUCK,
                 steps=step,
-                model=grounder.model,
-                run_id=session.run_id,
-                run_dir=str(session.run_dir),
-                last_summary=last_summary,
-                package=last_package,
                 reason=f"repeated action {fp}",
-                history=history,
             )
 
         kind = str(action.get("action") or "")
@@ -280,54 +360,35 @@ def android_run(
         if not exec_result.get("ok"):
             code = str(exec_result.get("code") or "")
             if code == "BLOCKED_BY_POLICY":
-                return RunResult(
-                    status=TERMINAL_BLOCKED,
-                    goal=goal,
+                return _result(
+                    TERMINAL_BLOCKED,
                     steps=step,
-                    model=grounder.model,
-                    run_id=session.run_id,
-                    run_dir=str(session.run_dir),
-                    last_summary=last_summary,
-                    package=last_package,
                     reason=str(exec_result.get("reason") or code),
-                    history=history,
                 )
             if code == "NEED_HUMAN":
-                return RunResult(
-                    status=TERMINAL_HUMAN,
-                    goal=goal,
+                return _result(
+                    TERMINAL_HUMAN,
                     steps=step,
-                    model=grounder.model,
-                    run_id=session.run_id,
-                    run_dir=str(session.run_dir),
-                    last_summary=last_summary,
-                    package=last_package,
                     reason=str(exec_result.get("reason") or code),
-                    history=history,
                 )
-            return RunResult(
-                status=TERMINAL_ERROR,
-                goal=goal,
+            return _result(
+                TERMINAL_ERROR,
                 steps=step,
-                model=grounder.model,
-                run_id=session.run_id,
-                run_dir=str(session.run_dir),
-                last_summary=last_summary,
-                package=last_package,
                 reason=str(exec_result.get("reason") or exec_result),
-                history=history,
             )
 
     session.log_event({"event": "android_run_stop", "status": TERMINAL_BUDGET, "steps": max_steps})
-    return RunResult(
-        status=TERMINAL_BUDGET,
-        goal=goal,
+    final_verdict = None
+    if success_check and not success_check.is_empty():
+        final_verdict = evaluate_success(
+            success_check,
+            package=last_package,
+            summary=last_summary,
+            xml=session.last_xml or "",
+        ).to_dict()
+    return _result(
+        TERMINAL_BUDGET,
         steps=max_steps,
-        model=grounder.model,
-        run_id=session.run_id,
-        run_dir=str(session.run_dir),
-        last_summary=last_summary,
-        package=last_package,
         reason=f"exceeded max_steps={max_steps}",
-        history=history,
+        verdict=final_verdict,
     )

@@ -47,6 +47,25 @@ def main(argv: list[str] | None = None) -> int:
     p_run.add_argument("--max-steps", type=int, default=25)
     p_run.add_argument("--model", default=os.getenv("MAU_GROUNDER_MODEL", ""))
     p_run.add_argument("--package", default="", help="Optional cold-start package before loop")
+    p_run.add_argument(
+        "--success-package",
+        default="",
+        help="success_check: require foreground package",
+    )
+    p_run.add_argument(
+        "--success-label",
+        action="append",
+        default=[],
+        dest="success_labels",
+        help="success_check: labels_any substring (repeatable)",
+    )
+    p_run.add_argument(
+        "--success-label-all",
+        action="append",
+        default=[],
+        dest="success_labels_all",
+        help="success_check: labels_all substring (repeatable)",
+    )
 
     args = parser.parse_args(argv)
 
@@ -108,13 +127,20 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if result.ok else 1
     if args.cmd == "run":
         from .run_loop import TERMINAL_OK, android_run
+        from .success_check import SuccessCheck
 
+        check = SuccessCheck(
+            package=args.success_package or None,
+            labels_any=list(args.success_labels or []),
+            labels_all=list(args.success_labels_all or []),
+        )
         result = android_run(
             session,
             args.goal,
             max_steps=args.max_steps,
             model=args.model or None,
             package=args.package or None,
+            success_check=None if check.is_empty() else check,
         )
         _print(result.to_dict())
         return 0 if result.status == TERMINAL_OK else 1

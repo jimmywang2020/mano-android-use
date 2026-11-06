@@ -122,6 +122,18 @@ uv run mau ready   # expect tips[], screen, text_backend
 
 Until then: wake/tips stay in **mano-android-use** only.
 
+## Phase 8 — `success_check` verifier (no Pack)
+
+```bash
+uv run pytest -q tests/test_success_check.py
+# Live sample (phone/MuMu + 携程 installed):
+# see docs/examples/ctrip-beijing-homestay.md
+```
+
+- [x] Unit: early-stop when check satisfied; terminate veto when not
+- [x] CLI/MCP expose `--success-package` / `--success-label*` / `success_labels_*`
+- [x] Live (optional): 携程搜北京民宿≈400/天 → `GOAL_REACHED` + `success_verdict.ok`（9 步至含「北京」+「民宿」检索页；默认只验 summary）
+
 ## Later
 
-- Phase 8+: Pack crystal / WeChat / cloud device
+- Phase 9+: Pack crystal / WeChat / cloud device

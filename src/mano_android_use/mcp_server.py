@@ -174,27 +174,41 @@ def android_run(
     max_steps: int = 25,
     model: str = "",
     package: str = "",
+    success_package: str = "",
+    success_labels_any: str = "",
+    success_labels_all: str = "",
 ) -> str:
     """B-path: bounded observe→propose→act loop toward a natural-language goal.
 
     Playbook for hosts:
-    - Known app → set package= (e.g. tv.danmaku.bili); avoid browser+中文 search.
+    - Known app → set package= (e.g. ctrip.android.view); avoid browser+中文 search.
+    - Optional success_check: success_package + success_labels_any/all (comma-separated).
+      Early-stops when the screen matches; vetoes false terminate:success.
     - Tries KEYCODE_WAKEUP once if asleep; still off → NEED_HUMAN (unlock manually).
     - Chinese typing needs AdbKeyboard (see ready.tips); install dialogs are not this tool.
     - Stops on payment/submit (NEED_HUMAN / BLOCKED_BY_POLICY), stuck, budget, errors.
-    See docs/agent-playbook.md.
+    See docs/agent-playbook.md and docs/examples/ctrip-beijing-homestay.md.
     """
     from .run_loop import android_run as _android_run
+    from .success_check import SuccessCheck
 
+    def _split(raw: str) -> list[str]:
+        return [p.strip() for p in (raw or "").split(",") if p.strip()]
+
+    check = SuccessCheck(
+        package=success_package.strip() or None,
+        labels_any=_split(success_labels_any),
+        labels_all=_split(success_labels_all),
+    )
     result = _android_run(
         _session(),
         goal,
         max_steps=int(max_steps),
         model=model or None,
         package=package or None,
+        success_check=None if check.is_empty() else check,
     )
     return _dumps(result.to_dict())
-
 
 def main() -> None:
     # stdio transport for Cursor / Codex MCP hosts.

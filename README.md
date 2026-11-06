@@ -61,7 +61,7 @@ USB device: `export MANO_DEVICE_SERIAL=<serial from adb devices>` yourself.
 | `uv run mau tap X Y` / `type` / `press` | Act |
 | `uv run mau launch PACKAGE` | Cold start |
 | `uv run mau propose "instruction" [--model ...]` | Grounder |
-| `uv run mau run "goal" [--max-steps N] [--model ...] [--package ...]` | B-path: bounded `android_run` |
+| `uv run mau run "goal" [--max-steps N] [--model ...] [--package ...] [--success-package ...] [--success-label ...]` | B-path + optional `success_check` |
 
 ## MCP (Cursor + Codex)
 
