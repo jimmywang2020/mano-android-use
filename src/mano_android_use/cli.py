@@ -66,6 +66,15 @@ def main(argv: list[str] | None = None) -> int:
         dest="success_labels_all",
         help="success_check: labels_all substring (repeatable)",
     )
+    p_plan = sub.add_parser(
+        "run-plan",
+        help="Run a staged plan JSON (generic A/B/C + per-stage success_check)",
+    )
+    p_plan.add_argument(
+        "plan",
+        help="Path to plan JSON (e.g. docs/examples/plans/ctrip-beijing-homestay.json)",
+    )
+    p_plan.add_argument("--model", default=os.getenv("MAU_GROUNDER_MODEL", ""))
 
     args = parser.parse_args(argv)
 
@@ -141,6 +150,16 @@ def main(argv: list[str] | None = None) -> int:
             model=args.model or None,
             package=args.package or None,
             success_check=None if check.is_empty() else check,
+        )
+        _print(result.to_dict())
+        return 0 if result.status == TERMINAL_OK else 1
+    if args.cmd == "run-plan":
+        from .run_loop import TERMINAL_OK
+        from .run_plan import android_run_plan, load_plan
+
+        plan_id, stages = load_plan(args.plan)
+        result = android_run_plan(
+            session, stages, plan_id=plan_id, model=args.model or None
         )
         _print(result.to_dict())
         return 0 if result.status == TERMINAL_OK else 1

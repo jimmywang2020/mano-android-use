@@ -62,6 +62,7 @@ USB device: `export MANO_DEVICE_SERIAL=<serial from adb devices>` yourself.
 | `uv run mau launch PACKAGE` | Cold start |
 | `uv run mau propose "instruction" [--model ...]` | Grounder |
 | `uv run mau run "goal" [--max-steps N] [--model ...] [--package ...] [--success-package ...] [--success-label ...]` | B-path + optional `success_check` |
+| `uv run mau run-plan docs/examples/plans/ctrip-beijing-homestay.json` | Staged A/B/C plan (app-agnostic JSON) |
 
 ## MCP (Cursor + Codex)
 

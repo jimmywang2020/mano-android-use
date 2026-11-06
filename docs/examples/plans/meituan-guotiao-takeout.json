@@ -1,0 +1,34 @@
+{
+  "id": "meituan-guotiao-takeout",
+  "description": "Same staged pattern as Ctrip — swap package/goals/labels. Replace package if your Meituan id differs (pm list packages | rg meituan).",
+  "stages": [
+    {
+      "id": "A_open_waimai",
+      "package": "com.sankuai.meituan",
+      "max_steps": 10,
+      "goal": "打开美团并进入外卖/美食相关首页；忽略弹窗广告，不要支付",
+      "success_check": {
+        "package": "com.sankuai.meituan",
+        "labels_any": ["外卖", "美食", "首页"]
+      }
+    },
+    {
+      "id": "B_search_guotiao",
+      "max_steps": 12,
+      "goal": "搜索粿条或进入可点粿条的商家列表；不要下单支付",
+      "success_check": {
+        "package": "com.sankuai.meituan",
+        "labels_any": ["粿条", "米线", "粉"]
+      }
+    },
+    {
+      "id": "C_merchant_or_cart",
+      "max_steps": 14,
+      "goal": "进入一家售卖粿条的商家页或已选购页面，确认能看到价格；不要提交订单或支付",
+      "success_check": {
+        "package": "com.sankuai.meituan",
+        "labels_any": ["¥", "起", "加入购物车", "结算"]
+      }
+    }
+  ]
+}

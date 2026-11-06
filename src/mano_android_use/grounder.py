@@ -497,9 +497,12 @@ def pixel_from_normalized(action: dict[str, Any], width: int, height: int) -> di
     if kind == "click" and "coordinate" in out:
         x, y = int_coord(out["coordinate"], width, height)
         out["pixel"] = [x, y]
-    if kind == "swipe":
-        x1, y1 = int_coord(out["coordinate"], width, height)
-        x2, y2 = int_coord(out["coordinate2"], width, height)
-        out["pixel"] = [x1, y1]
-        out["pixel2"] = [x2, y2]
+    if kind == "swipe" and "coordinate" in out:
+        # gui-plus sometimes emits end point as coordinate2, sometimes as offset.
+        end = out.get("coordinate2") or out.get("offset")
+        if end is not None:
+            x1, y1 = int_coord(out["coordinate"], width, height)
+            x2, y2 = int_coord(end, width, height)
+            out["pixel"] = [x1, y1]
+            out["pixel2"] = [x2, y2]
     return out

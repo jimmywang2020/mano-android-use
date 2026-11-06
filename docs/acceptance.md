@@ -134,6 +134,20 @@ uv run pytest -q tests/test_success_check.py
 - [x] CLI/MCP expose `--success-package` / `--success-label*` / `success_labels_*`
 - [x] Live (optional): 携程搜北京民宿≈400/天 → `GOAL_REACHED` + `success_verdict.ok`（9 步至含「北京」+「民宿」检索页；默认只验 summary）
 
+## Phase 9 — Staged `android_run_plan` (generic A/B/C)
+
+```bash
+uv run pytest -q tests/test_run_plan.py
+export MANO_DEVICE_SERIAL=<serial>
+uv run mau run-plan docs/examples/plans/ctrip-beijing-homestay.json
+```
+
+- [x] Unit: load Ctrip plan; stop on mid-stage failure
+- [x] CLI `run-plan` + MCP `android_run_plan`
+- [x] Live: Ctrip plan reaches stage **C**（summary 含 `¥400-...` 价带筛选/列表态）
+- [x] Meituan 粿条 plan JSON exists as same-pattern twin (live optional)
+- [x] PlanState continuity: later stages get `goal_context` (completed + last_summary + do-not-redo); unit `test_plan_injects_continuity_context`; live Ctrip A→B→C with `plan_context_injected` on B/C
+
 ## Later
 
-- Phase 9+: Pack crystal / WeChat / cloud device
+- Phase 10+: Pack crystal / WeChat / cloud device

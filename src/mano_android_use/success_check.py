@@ -88,6 +88,11 @@ def evaluate_success(
         blob = f"{blob}\n{xml}"
     reasons: list[str] = []
 
+    def _present(needle: str) -> bool:
+        # Summary-only by default. Do not scan full XML for ¥ — query pages often
+        # bury promotional prices and false-trigger stage C.
+        return needle in blob
+
     if check.package:
         if (package or "").strip() != check.package.strip():
             reasons.append(
@@ -95,11 +100,11 @@ def evaluate_success(
             )
 
     for needle in check.labels_all:
-        if needle not in blob:
+        if not _present(needle):
             reasons.append(f"labels_all missing {needle!r}")
 
     if check.labels_any:
-        if not any(n in blob for n in check.labels_any):
+        if not any(_present(n) for n in check.labels_any):
             reasons.append(
                 "labels_any none of "
                 + ",".join(repr(n) for n in check.labels_any)

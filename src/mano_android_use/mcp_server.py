@@ -210,6 +210,50 @@ def android_run(
     )
     return _dumps(result.to_dict())
 
+
+@mcp.tool()
+def android_run_plan(plan_path: str = "", plan_json: str = "", model: str = "") -> str:
+    """Run a staged plan (generic A/B/C): sequential android_run + per-stage success_check.
+
+    App-agnostic — Ctrip homestay and Meituan takeout differ only by plan data.
+    Provide either plan_path (repo-relative or absolute JSON) or plan_json (raw JSON).
+    Examples: docs/examples/plans/ctrip-beijing-homestay.json,
+    docs/examples/plans/meituan-guotiao-takeout.json.
+    """
+    import json
+    from pathlib import Path
+
+    from .run_loop import TERMINAL_OK
+    from .run_plan import RunStage, android_run_plan, load_plan
+
+    if plan_path.strip():
+        path = Path(plan_path.strip())
+        if not path.is_file():
+            # Allow repo-relative paths when MCP cwd differs
+            root = Path(__file__).resolve().parents[2]
+            alt = root / plan_path.strip()
+            path = alt if alt.is_file() else path
+        plan_id, stages = load_plan(path)
+    elif plan_json.strip():
+        data = json.loads(plan_json)
+        plan_id = str(data.get("id") or data.get("name") or "plan")
+        stages = [RunStage.from_mapping(s) for s in (data.get("stages") or [])]
+    else:
+        return _dumps(
+            {
+                "status": "ERROR",
+                "reason": "provide plan_path or plan_json",
+            }
+        )
+
+    result = android_run_plan(
+        _session(), stages, plan_id=plan_id, model=model or None
+    )
+    out = result.to_dict()
+    out["ok"] = result.status == TERMINAL_OK
+    return _dumps(out)
+
+
 def main() -> None:
     # stdio transport for Cursor / Codex MCP hosts.
     mcp.run(transport="stdio")

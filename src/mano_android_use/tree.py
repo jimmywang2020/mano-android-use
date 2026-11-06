@@ -61,7 +61,7 @@ def summarize(package: str, nodes: list[dict[str, Any]]) -> str:
         label = n.get("text") or n.get("desc")
         if label:
             labels.append(str(label)[:40])
-        if len(labels) >= 8:
+        if len(labels) >= 20:
             break
     has_edit = any(n.get("class") in {"EditText", "AutoCompleteTextView"} for n in nodes)
     # Keep aligned with safety.py — avoid bare「支付」(ColorOS「钱包与支付」).

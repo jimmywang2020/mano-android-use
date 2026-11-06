@@ -55,6 +55,22 @@ Pass `success_package` / `success_labels_any` / `success_labels_all` so
 
 Example: [docs/examples/ctrip-beijing-homestay.md](examples/ctrip-beijing-homestay.md).
 
+## Staged plans (A/B/C) — app-agnostic
+
+Long goals → split into stages, each with its own `goal` + `success_check`.
+Runner: `mau run-plan <plan.json>` or MCP `android_run_plan`.
+
+| App | Plan JSON |
+|-----|-----------|
+| 携程北京民宿 | [examples/plans/ctrip-beijing-homestay.json](examples/plans/ctrip-beijing-homestay.json) |
+| 美团粿条外卖 | [examples/plans/meituan-guotiao-takeout.json](examples/plans/meituan-guotiao-takeout.json) |
+
+Same code path; only package / labels / goals change. Host can also call `android_run` three times by hand.
+
+Between stages, `PlanState` injects into the next stage prompt: completed stage ids,
+last screen summary, and **do not redo completed stages** (no unnecessary relaunch /
+re-select city). This is thin continuity — not a full LangGraph.
+
 ## Out of scope for mau
 
 - Installing / approving third-party APKs as a product feature

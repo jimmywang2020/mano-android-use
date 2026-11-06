@@ -1,0 +1,35 @@
+{
+  "id": "ctrip-beijing-homestay",
+  "description": "Generic staged plan: A enter lodging UI → B city Beijing → C priced list (~¥400 soft in goals).",
+  "stages": [
+    {
+      "id": "A_enter_lodging",
+      "package": "ctrip.android.view",
+      "max_steps": 10,
+      "goal": "打开携程后进入酒店或民宿预订相关页面；忽略广告（关闭或返回），不要下单或支付",
+      "success_check": {
+        "package": "ctrip.android.view",
+        "labels_any": ["酒店", "民宿", "客栈"]
+      }
+    },
+    {
+      "id": "B_city_beijing",
+      "max_steps": 12,
+      "goal": "将目的地或城市设为北京，并进入民宿/客栈相关查询或筛选；忽略广告，不要下单或支付",
+      "success_check": {
+        "package": "ctrip.android.view",
+        "labels_all": ["北京"],
+        "labels_any": ["民宿", "客栈", "酒店"]
+      }
+    },
+    {
+      "id": "C_price_list",
+      "max_steps": 20,
+      "goal": "在北京民宿查询页点击橙色或主按钮「查询」/「搜索」进入房源列表；在列表或详情的可见文案中看到¥或「起」价格（约400元/天更好）；忽略广告；不要下单支付",
+      "success_check": {
+        "package": "ctrip.android.view",
+        "labels_any": ["¥", "￥", "起"]
+      }
+    }
+  ]
+}

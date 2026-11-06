@@ -82,15 +82,21 @@ def _instruction(
     *,
     success_check: SuccessCheck | None = None,
     check_feedback: str = "",
+    goal_context: str = "",
 ) -> str:
-    parts = [
-        f"User goal: {goal}",
-        f"Step {step}/{max_steps}. Current screen summary: {summary}",
-        "Propose the single next UI action toward the goal. "
-        "If the goal is already achieved, return "
-        '{"action":"terminate","status":"success"}. '
-        "Never pay, confirm payment, or submit an order.",
-    ]
+    parts: list[str] = []
+    if goal_context.strip():
+        parts.append(goal_context.strip())
+    parts.extend(
+        [
+            f"User goal: {goal}",
+            f"Step {step}/{max_steps}. Current screen summary: {summary}",
+            "Propose the single next UI action toward the goal. "
+            "If the goal is already achieved, return "
+            '{"action":"terminate","status":"success"}. '
+            "Never pay, confirm payment, or submit an order.",
+        ]
+    )
     if success_check and not success_check.is_empty():
         parts.append(
             "External success_check (must hold before success is accepted): "
@@ -110,6 +116,7 @@ def android_run(
     package: str | None = None,
     stuck_repeat: int = 3,
     success_check: SuccessCheck | dict[str, Any] | None = None,
+    goal_context: str = "",
 ) -> RunResult:
     """Run a bounded observe→propose→act loop toward ``goal``.
 
@@ -252,6 +259,7 @@ def android_run(
                 max_steps,
                 success_check=success_check if isinstance(success_check, SuccessCheck) else None,
                 check_feedback=check_feedback,
+                goal_context=goal_context,
             ),
         )
         check_feedback = ""

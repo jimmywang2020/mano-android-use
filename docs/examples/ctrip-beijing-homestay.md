@@ -3,6 +3,17 @@
 Uses optional **`success_check`** so `GOAL_REACHED` is not only the model saying
 `terminate:success`.
 
+**Prefer staged plan** (generic A/B/C — same runner as 美团粿条):
+
+[`plans/ctrip-beijing-homestay.json`](plans/ctrip-beijing-homestay.json)
+
+```bash
+export MANO_DEVICE_SERIAL=<phone-or-mumu-serial>
+uv run mau run-plan docs/examples/plans/ctrip-beijing-homestay.json
+```
+
+Meituan takeout twin (data only): [`plans/meituan-guotiao-takeout.json`](plans/meituan-guotiao-takeout.json).
+
 | Role | Value |
 |------|--------|
 | App package | `ctrip.android.view` |
