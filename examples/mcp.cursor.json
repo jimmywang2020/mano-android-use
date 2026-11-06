@@ -1,12 +1,12 @@
 {
   "mcpServers": {
     "mano-android-use": {
-      "command": "/Users/wangjinxiang/Desktop/Projects/mano-android-use/scripts/mau-mcp-with-mumu.sh",
+      "command": "/ABS/PATH/TO/mano-android-use/scripts/mau-mcp-with-mumu.sh",
       "args": [],
       "env": {
         "MAU_GROUNDER_MODEL": "gui-plus-2026-02-26",
-        "MAU_RUNS_DIR": "/Users/wangjinxiang/Desktop/Projects/mano-android-use/runs",
-        "MCP_REV": "phase6-android-run"
+        "MAU_RUNS_DIR": "/ABS/PATH/TO/mano-android-use/runs",
+        "MCP_REV": "open-source"
       }
     }
   }
