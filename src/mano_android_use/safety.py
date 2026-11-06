@@ -9,20 +9,21 @@ from typing import Any
 
 
 # Heuristic UI / intent phrases (zh + en). Expand via env or code as needed.
+# Prefer multi-char / intent phrases. Bare "支付" false-positives on ColorOS
+# Settings rows like「钱包与支付」and must not stop normal phone navigation.
 DEFAULT_BLOCK_PATTERNS: tuple[str, ...] = (
-    "支付",
-    "付款",
     "立即支付",
+    "现在支付",
     "确认支付",
     "确认付款",
     "提交订单",
     "确认下单",
     "去支付",
     "收银台",
+    "付款",
     "Pay now",
     "Place order",
     "Confirm purchase",
-    "Purchase",
     "Buy now",
     "Checkout",
 )

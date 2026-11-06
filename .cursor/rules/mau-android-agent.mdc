@@ -1,0 +1,18 @@
+---
+description: How Cursor Agent should drive mano-android-use (MCP mau) on emulator/phone
+alwaysApply: true
+---
+
+# mano-android-use agent rule
+
+When controlling Android via this repo's MCP (`mano-android-use` / `mau`):
+
+1. Start with `ready` (or `doctor` then `ready`). Honor `tips[]`, `screen.awake`, `text_backend.available`.
+2. Prefer `android_run(..., package="...")` / `launch_app` when the app package is known. Do **not** open installed apps by typing Chinese in a browser.
+3. Chinese `type_text` only if AdbKeyboard is available; otherwise tap/launch only and tell the user to install OpenATX AdbKeyboard.
+4. APK install / ColorOS「继续安装」dialogs: handle with `observe`+`tap` or ask the human — not as an `android_run` goal.
+5. If the screen is off, wake/unlock first; `android_run` only tries one `KEYCODE_WAKEUP`.
+6. On `NEED_HUMAN` / `BLOCKED_BY_POLICY` for payment UI, stop.
+7. Wireless ADB: if connect fails, re-pair/connect and refresh `MANO_DEVICE_SERIAL` (ports change).
+
+Full playbook: [docs/agent-playbook.md](docs/agent-playbook.md).

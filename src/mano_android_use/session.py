@@ -16,7 +16,9 @@ from mano.media import png_size
 from mano.observation import capture_observation
 from mano.text_input import OpenAtxAdbKeyboardBackend
 
+from .display import ensure_awake, screen_state
 from .safety import SafetyDecision, SafetyGateway
+from .tips import build_tips
 from .tree import compact_nodes, find_by_text, summarize
 
 
@@ -85,22 +87,45 @@ class DeviceSession:
             "error": err or None,
         }
 
+    def screen(self) -> dict[str, Any]:
+        """Current display wakefulness (Consumer preflight)."""
+        return screen_state(self.adb)
+
+    def ensure_awake(self, *, auto_wake: bool = True) -> dict[str, Any]:
+        """Wake once with KEYCODE_WAKEUP if asleep; does not unlock keyguard."""
+        return ensure_awake(self.adb, auto_wake=auto_wake)
+
     def ready(self) -> dict[str, Any]:
         info = self.doctor()
         if not info["ok"]:
             info["ready"] = False
+            info["tips"] = build_tips(include_playbook=True)
             return info
+        info["screen"] = self.screen()
         # Optional unicode IME preflight — warn only.
         try:
-            cap = self.adb.text_backend.preflight(self.adb)
-            info["text_backend"] = {
-                "name": cap.name,
-                "available": cap.available,
-                "unicode": cap.unicode,
-                "reason": cap.reason,
-            }
+            if self.adb.text_backend is None:
+                info["text_backend"] = {
+                    "available": False,
+                    "unicode": False,
+                    "reason": "unicode_text disabled for this session",
+                }
+            else:
+                cap = self.adb.text_backend.preflight(self.adb)
+                info["text_backend"] = {
+                    "name": cap.name,
+                    "available": cap.available,
+                    "unicode": cap.unicode,
+                    "reason": cap.reason,
+                }
         except Exception as exc:  # noqa: BLE001
             info["text_backend"] = {"available": False, "reason": str(exc)[:300]}
+        info["tips"] = build_tips(
+            screen=info.get("screen"),
+            text_backend=info.get("text_backend"),
+            include_playbook=True,
+        )
+        # Device reachable counts as ready; IME/screen issues are tips, not hard fail.
         info["ready"] = True
         return info
 

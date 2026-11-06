@@ -36,13 +36,22 @@ def _dumps(data: Any) -> str:
 
 @mcp.tool()
 def doctor() -> str:
-    """Diagnose adb binary, serial, and device reachability (read-only)."""
+    """Diagnose adb binary, serial, and device reachability (read-only).
+
+    Agent tips: confirm serial matches the phone (wireless ports change). Call ready
+    next for IME + screen + playbook tips. See docs/agent-playbook.md.
+    """
     return _dumps(_session().doctor())
 
 
 @mcp.tool()
 def ready() -> str:
-    """Ensure device session is ready (doctor + text backend preflight)."""
+    """Doctor + screen wakefulness + Unicode IME preflight + agent tips.
+
+    Returns JSON with screen, text_backend, tips[]. Chinese type_text needs OpenATX
+    AdbKeyboard; launch/tap work without it. Prefer package=/launch_app over
+    browser+中文. Keep screen awake/unlocked. Full playbook: docs/agent-playbook.md.
+    """
     return _dumps(_session().ready())
 
 
@@ -67,7 +76,11 @@ def find(query: str, limit: int = 10) -> str:
 
 @mcp.tool()
 def launch_app(package: str) -> str:
-    """Cold-start an Android package (force-stop then launch)."""
+    """Cold-start an Android package (force-stop then launch).
+
+    Prefer this (or android_run package=) when the app is installed — e.g.
+    tv.danmaku.bili for 哔哩哔哩 — instead of typing Chinese in a browser.
+    """
     return _dumps(_session().launch(package))
 
 
@@ -162,11 +175,14 @@ def android_run(
     model: str = "",
     package: str = "",
 ) -> str:
-    """B-path: run a bounded observe→propose→act loop toward a natural-language goal.
+    """B-path: bounded observe→propose→act loop toward a natural-language goal.
 
-    Uses the same L0 session, safety gateway, and GUI grounder as the fine-grained
-    tools. Prefer this when the host should not orchestrate every tap. Stops on
-    payment/submit screens, policy blocks, repeated actions, errors, or budget.
+    Playbook for hosts:
+    - Known app → set package= (e.g. tv.danmaku.bili); avoid browser+中文 search.
+    - Tries KEYCODE_WAKEUP once if asleep; still off → NEED_HUMAN (unlock manually).
+    - Chinese typing needs AdbKeyboard (see ready.tips); install dialogs are not this tool.
+    - Stops on payment/submit (NEED_HUMAN / BLOCKED_BY_POLICY), stuck, budget, errors.
+    See docs/agent-playbook.md.
     """
     from .run_loop import android_run as _android_run
 

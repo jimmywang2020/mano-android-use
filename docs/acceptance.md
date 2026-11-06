@@ -92,6 +92,36 @@ uv run mau run "打开设置" --max-steps 8
 - [x] MCP tool `android_run` listed after reconnect (host can call same loop)
 - [x] Payment/submit still stops the loop (`NEED_HUMAN` / `BLOCKED_BY_POLICY`) — Airbnb 预订页 `NEED_HUMAN`，未点击
 
+## Phase 7 — Agent tips, playbook, screen preflight (mau only)
+
+```bash
+uv run pytest -q tests/test_display_tips.py tests/test_run_loop.py
+uv run mau ready   # expect tips[], screen, text_backend
+```
+
+### Phase 7.1 — mau runtime
+
+- [x] `ready` JSON includes `screen`, `text_backend`, non-empty `tips[]` (playbook + conditional IME/screen)
+- [x] MCP `ready` / `android_run` / `launch_app` docstrings mention package= vs browser+中文 and AdbKeyboard
+- [x] `android_run` with screen still off after wake → `NEED_HUMAN` + `tips` (unit: `test_screen_off_need_human`)
+- [x] Live (optional): `mau ready` on phone shows `screen.awake` true when unlocked
+
+### Phase 7.2 — docs + Cursor rule
+
+- [x] [`docs/agent-playbook.md`](agent-playbook.md) present and linked from README
+- [x] [`.cursor/rules/mau-android-agent.mdc`](../.cursor/rules/mau-android-agent.mdc) `alwaysApply: true`
+
+### Phase 7.3 — mano Core (deferred)
+
+**Do not start** until ≥2 Consumers need the same primitive.
+
+| Gate | When to open Core PR |
+|------|----------------------|
+| Action aliases (`system_button_press`) | mau mapping insufficient / other Consumer duplicates it |
+| Wake primitive in Core Adb | mau `display.ensure_awake` reused elsewhere and diverging |
+
+Until then: wake/tips stay in **mano-android-use** only.
+
 ## Later
 
-- Phase 7+: Pack crystal / WeChat / cloud device
+- Phase 8+: Pack crystal / WeChat / cloud device

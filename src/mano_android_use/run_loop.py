@@ -12,6 +12,7 @@ from typing import Any
 
 from .grounder import Grounder, pixel_from_normalized
 from .session import DeviceSession
+from .tips import build_tips
 
 
 TERMINAL_OK = "GOAL_REACHED"
@@ -34,9 +35,11 @@ class RunResult:
     package: str = ""
     reason: str = ""
     history: list[dict[str, Any]] = field(default_factory=list)
+    tips: list[str] = field(default_factory=list)
+    screen: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out = {
             "status": self.status,
             "goal": self.goal,
             "steps": self.steps,
@@ -48,6 +51,11 @@ class RunResult:
             "reason": self.reason,
             "history": self.history,
         }
+        if self.tips:
+            out["tips"] = self.tips
+        if self.screen is not None:
+            out["screen"] = self.screen
+        return out
 
 
 def _action_fingerprint(action: dict[str, Any] | None, mapped: dict[str, Any] | None) -> str:
@@ -90,6 +98,27 @@ def android_run(
             run_id=session.run_id,
             run_dir=str(session.run_dir),
             reason="empty goal",
+            tips=build_tips(include_playbook=True),
+        )
+
+    # Consumer preflight: try one wake; still off → NEED_HUMAN (no Core change).
+    screen = session.ensure_awake(auto_wake=True)
+    if not screen.get("awake"):
+        tips = build_tips(screen=screen, include_playbook=True)
+        session.log_event(
+            {"event": "android_run_stop", "status": TERMINAL_HUMAN, "reason": "screen_off"}
+        )
+        return RunResult(
+            status=TERMINAL_HUMAN,
+            goal=goal,
+            steps=0,
+            model=model or "",
+            run_id=session.run_id,
+            run_dir=str(session.run_dir),
+            reason="screen off or not awake after KEYCODE_WAKEUP; unlock device and retry",
+            tips=tips,
+            screen=screen,
+            history=[{"event": "screen_preflight", **screen}],
         )
 
     if package:
@@ -212,6 +241,13 @@ def android_run(
             )
 
         kind = str(action.get("action") or "")
+        # gui-plus sometimes emits system_button_press + button_name instead of
+        # system_button + button (seen on ColorOS / phone runs).
+        if kind in {"system_button_press", "press", "keyevent"}:
+            kind = "system_button"
+            if "button" not in action and action.get("button_name"):
+                action = {**action, "button": action.get("button_name")}
+                mapped = {**mapped, "button": action.get("button_name")}
         exec_result: dict[str, Any]
         if kind == "click" and "pixel" in mapped:
             x, y = mapped["pixel"]
@@ -223,7 +259,12 @@ def android_run(
         elif kind == "type":
             exec_result = session.type_text(str(action.get("text") or ""), semantic_hint=goal[:120])
         elif kind in {"system_button", "key"}:
-            btn = str(action.get("button") or action.get("text") or "BACK")
+            btn = str(
+                action.get("button")
+                or action.get("button_name")
+                or action.get("text")
+                or "BACK"
+            )
             exec_result = session.press(btn)
         elif kind == "wait":
             import time

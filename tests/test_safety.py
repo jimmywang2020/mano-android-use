@@ -44,3 +44,10 @@ def test_allows_back_on_payment_screen():
         ui_blob="现在支付 ¥1",
     )
     assert d.allow
+
+
+def test_allows_coloros_settings_wallet_row():
+    """Bare「支付」must not trip on Settings「钱包与支付」."""
+    gw = SafetyGateway()
+    d = gw.screen_looks_dangerous("云服务, 钱包与支付, 电池")
+    assert d.allow

@@ -64,8 +64,24 @@ def summarize(package: str, nodes: list[dict[str, Any]]) -> str:
         if len(labels) >= 8:
             break
     has_edit = any(n.get("class") in {"EditText", "AutoCompleteTextView"} for n in nodes)
+    # Keep aligned with safety.py — avoid bare「支付」(ColorOS「钱包与支付」).
+    _danger_keys = (
+        "立即支付",
+        "现在支付",
+        "确认支付",
+        "确认付款",
+        "提交订单",
+        "确认下单",
+        "去支付",
+        "收银台",
+        "付款",
+        "Pay now",
+        "Place order",
+        "Buy now",
+        "Checkout",
+    )
     danger = any(
-        any(k in (str(n.get("text") or "") + str(n.get("desc") or "")) for k in ("支付", "付款", "提交订单", "确认支付", "Pay", "Purchase"))
+        any(k in (str(n.get("text") or "") + str(n.get("desc") or "")) for k in _danger_keys)
         for n in nodes
     )
     bits = [f"package={package or 'unknown'}"]

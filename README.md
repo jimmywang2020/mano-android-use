@@ -89,6 +89,12 @@ Tools: `doctor`, `ready`, `observe`, `find`, `launch_app`, `tap`, `swipe`, `type
 | `glm-4.6v-flash` | **Production-supported** (Zhipu); set `MAU_GROUNDER_BASE_URL` |
 | `glm-4.6v-flashx` | Supported id; wire when you enable billing |
 
+## Agent playbook
+
+Hosts (Cursor / Codex): read [`docs/agent-playbook.md`](docs/agent-playbook.md).  
+Runtime tips also appear in `mau ready` → `tips[]` and MCP tool descriptions.  
+Project rule: [`.cursor/rules/mau-android-agent.mdc`](.cursor/rules/mau-android-agent.mdc).
+
 ## Acceptance
 
 See [`docs/acceptance.md`](docs/acceptance.md). **Phase 5 requires you to run one short task in Cursor and one in Codex.**
