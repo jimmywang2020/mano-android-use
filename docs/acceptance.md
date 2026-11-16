@@ -148,6 +148,21 @@ uv run mau run-plan docs/examples/plans/ctrip-beijing-homestay.json
 - [x] Meituan 粿条 plan JSON exists as same-pattern twin (live optional)
 - [x] PlanState continuity: later stages get `goal_context` (completed + last_summary + do-not-redo); unit `test_plan_injects_continuity_context`; live Ctrip A→B→C with `plan_context_injected` on B/C
 
+## Phase 10 — Default-path shrink (Host goal; mau loop; L0 execute)
+
+```bash
+uv run pytest -q tests/test_apply_action.py tests/test_run_loop.py tests/test_display_tips.py
+```
+
+- [x] Shared `apply_action` used by `android_run` (+ propose execute when allowed)
+- [x] `propose_action(execute=true)` / `mau propose --execute` deprecated unless `MAU_ALLOW_PROPOSE_EXECUTE=1`
+- [x] Journal/execution `via`: `android_run` | `propose_execute` | `l0_direct`
+- [x] Playbook + Cursor rule + README tool groups; `docs/eval-golden.md`
+- [x] Optional `stuck_same_summary` on `android_run` (default 0 = off)
+
+See [`docs/plan-next.md`](plan-next.md).
+
 ## Later
 
-- Phase 10+: Pack crystal / WeChat / cloud device
+- Phase 11+: Pack crystal / WeChat / cloud device
+- Optional: `mau eval`, `run-plan --from-stage`, MCP `agent|debug` profile

@@ -1,4 +1,4 @@
-"""MCP A′ server: host orchestrates; grounder sees screenshots; L0 executes."""
+"""MCP server: Host picks goal/plan; mau may orchestrate; Grounder sees shots; L0 executes."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 
+from .apply_action import VIA_L0_DIRECT, VIA_PROPOSE_EXECUTE, apply_action
 from .envfile import load_dotenv
 from .grounder import Grounder, pixel_from_normalized
 from .session import DeviceSession
@@ -32,6 +33,15 @@ def _session() -> DeviceSession:
 
 def _dumps(data: Any) -> str:
     return json.dumps(data, ensure_ascii=False, indent=2)
+
+
+def _propose_execute_allowed() -> bool:
+    return os.getenv("MAU_ALLOW_PROPOSE_EXECUTE", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 @mcp.tool()
@@ -70,7 +80,10 @@ def observe(detail: str = "tree", max_nodes: int = 80) -> str:
 
 @mcp.tool()
 def find(query: str, limit: int = 10) -> str:
-    """Find UI nodes by substring in text/content-desc/resource-id (no VLM)."""
+    """Find UI nodes by substring in text/content-desc/resource-id (no VLM).
+
+    Correction/debug only — for multi-step goals prefer android_run / android_run_plan.
+    """
     return _dumps(_session().find(query, limit=limit))
 
 
@@ -86,48 +99,60 @@ def launch_app(package: str) -> str:
 
 @mcp.tool()
 def tap(x: int, y: int, semantic_hint: str = "") -> str:
-    """Tap at pixel coordinates. Optional semantic_hint helps the safety gateway."""
-    return _dumps(_session().tap(int(x), int(y), semantic_hint=semantic_hint))
+    """L0 correction: tap pixel coordinates. Optional semantic_hint for safety.
+
+    Prefer android_run / android_run_plan for multi-step goals. Use tap for install
+    dialogs, known tree hits after find, or when the run loop needs a human/host nudge.
+    """
+    return _dumps(
+        _session().tap(int(x), int(y), semantic_hint=semantic_hint, via=VIA_L0_DIRECT)
+    )
 
 
 @mcp.tool()
 def swipe(x1: int, y1: int, x2: int, y2: int, duration_ms: int = 700, semantic_hint: str = "") -> str:
-    """Swipe from (x1,y1) to (x2,y2) in pixels."""
+    """L0 correction: swipe from (x1,y1) to (x2,y2) in pixels."""
     return _dumps(
         _session().swipe(
-            int(x1), int(y1), int(x2), int(y2), duration_ms=int(duration_ms), semantic_hint=semantic_hint
+            int(x1),
+            int(y1),
+            int(x2),
+            int(y2),
+            duration_ms=int(duration_ms),
+            semantic_hint=semantic_hint,
+            via=VIA_L0_DIRECT,
         )
     )
 
 
 @mcp.tool()
 def type_text(text: str, semantic_hint: str = "") -> str:
-    """Type text via the configured IME backend (Unicode needs AdbKeyboard)."""
-    return _dumps(_session().type_text(text, semantic_hint=semantic_hint))
+    """L0 correction: type text via IME (Unicode needs AdbKeyboard)."""
+    return _dumps(
+        _session().type_text(text, semantic_hint=semantic_hint, via=VIA_L0_DIRECT)
+    )
 
 
 @mcp.tool()
 def press_button(button: str) -> str:
-    """Press a whitelisted system button: BACK, HOME, ENTER, CLEAR."""
-    return _dumps(_session().press(button))
+    """L0 correction: press BACK, HOME, ENTER, or CLEAR."""
+    return _dumps(_session().press(button, via=VIA_L0_DIRECT))
 
 
 @mcp.tool()
 def propose_action(instruction: str, model: str = "", execute: bool = False) -> str:
-    """Ask the GUI grounder (gui-plus or glm-4.6v-flash) what to do next.
+    """Debug/single-step: ask Grounder what to do next (does not replace android_run).
 
-    The host should NOT look at screenshots; this tool sends the on-disk screenshot
-    to the configured grounder model and returns a normalized action JSON.
-    If execute=true, runs the action through the safety gateway + ADB.
+    Host should NOT look at screenshots; this tool sends the on-disk screenshot to
+    the configured grounder and returns normalized action JSON + mapped pixels.
+
+    Default path for goals: android_run or android_run_plan.
+    execute=true is DEPRECATED — ignored unless MAU_ALLOW_PROPOSE_EXECUTE=1.
+    Prefer android_run (orchestration) or L0 tap/swipe/type/press (correction).
     """
     session = _session()
-    if not session.last_xml or session.last_size == (0, 0):
-        obs = session.observe(detail="tree")
-        image = Path(obs["screenshot_path"])
-    else:
-        # Re-observe for a fresh frame before grounding.
-        obs = session.observe(detail="tree")
-        image = Path(obs["screenshot_path"])
+    obs = session.observe(detail="tree")
+    image = Path(obs["screenshot_path"])
 
     grounder = Grounder(model or None)
     result = grounder.propose(image, instruction)
@@ -140,25 +165,25 @@ def propose_action(instruction: str, model: str = "", execute: bool = False) -> 
     mapped = pixel_from_normalized(result.action, session.last_size[0], session.last_size[1])
     out["mapped"] = mapped
     if execute:
-        kind = result.action.get("action")
-        if kind == "click" and "pixel" in mapped:
-            x, y = mapped["pixel"]
-            out["execution"] = session.tap(
-                x, y, semantic_hint=instruction[:120]
-            )
-        elif kind == "swipe" and "pixel" in mapped and "pixel2" in mapped:
-            x1, y1 = mapped["pixel"]
-            x2, y2 = mapped["pixel2"]
-            out["execution"] = session.swipe(x1, y1, x2, y2, semantic_hint=instruction[:120])
-        elif kind == "type":
-            out["execution"] = session.type_text(str(result.action.get("text") or ""))
-        elif kind in {"system_button", "key"}:
-            btn = str(result.action.get("button") or result.action.get("text") or "BACK")
-            out["execution"] = session.press(btn)
-        elif kind == "terminate":
-            out["execution"] = {"ok": True, "terminated": True, "status": result.action.get("status")}
+        out["execute_deprecated"] = True
+        if not _propose_execute_allowed():
+            out["execution"] = {
+                "ok": False,
+                "code": "EXECUTE_DEPRECATED",
+                "reason": (
+                    "propose_action(execute=true) is deprecated; use android_run or "
+                    "L0 tap/swipe/type/press. Set MAU_ALLOW_PROPOSE_EXECUTE=1 to force."
+                ),
+                "via": VIA_PROPOSE_EXECUTE,
+            }
         else:
-            out["execution"] = {"ok": False, "code": "UNSUPPORTED", "reason": f"kind={kind}"}
+            out["execution"] = apply_action(
+                session,
+                result.action,
+                mapped,
+                semantic_hint=instruction[:120],
+                via=VIA_PROPOSE_EXECUTE,
+            )
     return _dumps(out)
 
 
@@ -178,12 +203,14 @@ def android_run(
     success_labels_any: str = "",
     success_labels_all: str = "",
 ) -> str:
-    """B-path: bounded observe→propose→act loop toward a natural-language goal.
+    """PRIMARY: bounded observe→propose→act loop toward a natural-language goal.
 
-    Playbook for hosts:
+    Host picks the goal; mau orchestrates the loop; Grounder sees screenshots; L0 acts.
+    Playbook:
     - Known app → set package= (e.g. ctrip.android.view); avoid browser+中文 search.
     - Optional success_check: success_package + success_labels_any/all (comma-separated).
       Early-stops when the screen matches; vetoes false terminate:success.
+    - Long / multi-stage goals → prefer android_run_plan with short max_steps per stage.
     - Tries KEYCODE_WAKEUP once if asleep; still off → NEED_HUMAN (unlock manually).
     - Chinese typing needs AdbKeyboard (see ready.tips); install dialogs are not this tool.
     - Stops on payment/submit (NEED_HUMAN / BLOCKED_BY_POLICY), stuck, budget, errors.
@@ -213,10 +240,10 @@ def android_run(
 
 @mcp.tool()
 def android_run_plan(plan_path: str = "", plan_json: str = "", model: str = "") -> str:
-    """Run a staged plan (generic A/B/C): sequential android_run + per-stage success_check.
+    """PRIMARY for long tasks: staged plan = sequential android_run + per-stage success_check.
 
-    App-agnostic — Ctrip homestay and Meituan takeout differ only by plan data.
-    Provide either plan_path (repo-relative or absolute JSON) or plan_json (raw JSON).
+    App-agnostic — Ctrip/Meituan differ only by plan data. Prefer short stages over one
+    huge android_run goal. Provide plan_path (repo-relative or absolute) or plan_json.
     Examples: docs/examples/plans/ctrip-beijing-homestay.json,
     docs/examples/plans/meituan-guotiao-takeout.json.
     """

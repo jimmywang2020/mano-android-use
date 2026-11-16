@@ -8,9 +8,10 @@ This is a **Consumer / MCP facade** over mano Core — **not** a fork of Core. U
 
 | Layer | Role |
 |-------|------|
-| **Host** (Cursor / Codex) | Orchestrates with compact UI trees — does **not** need every screenshot |
-| **Grounder** | VLM proposes the next UI action (`gui-plus*`, `glm-4.6v-flash*`) |
-| **L0** | mano ADB observe / act / journal — **no Pack required** |
+| **Host** (Cursor / Codex) | Picks **goal/plan**; corrects from compact trees — does **not** need every screenshot |
+| **mau loop** | `android_run` / `android_run_plan` bounded orchestration |
+| **Grounder** | VLM sees on-disk screenshots only; proposes next action (`gui-plus*`, `glm-4.6v-flash*`) |
+| **L0** | Sole executor: mano ADB observe / act / journal — **no Pack required** |
 | **Safety** | Blocks payment / submit heuristics before ADB |
 
 **In scope:** local/USB/wireless Android (emulator or phone), stdio MCP, bounded `android_run` / staged `run-plan`.  
@@ -76,17 +77,18 @@ uv run mau run-plan docs/examples/plans/ctrip-beijing-homestay.json
 
 | Command | Purpose |
 |---------|---------|
+| **Goal / orchestration** | |
+| `mau run "goal" [--package ...] [--success-*]` | **Primary:** bounded loop + optional `success_check` |
+| `mau run-plan <plan.json>` | **Long tasks:** staged A/B/C plan |
 | `mau doctor` / `ready` | Device health + tips |
-| `mau observe [--detail tree\|screenshot\|both]` | Compact tree + summary (default: no host screenshot) |
-| `mau find QUERY` | Tree search (no VLM) |
-| `mau tap X Y` / `type` / `press` / `launch` | Act |
-| `mau propose "instruction"` | One-shot grounder |
-| `mau run "goal" [--package ...] [--success-*]` | Bounded loop + optional `success_check` |
-| `mau run-plan <plan.json>` | Staged A/B/C plan |
+| **L0 correction** | |
+| `mau observe` / `find` / `tap` / `type` / `press` / `launch` | Install dialogs, one-off fixes |
+| **Debug** | |
+| `mau propose "instruction"` | One-shot grounder (default: no execute; not the main loop) |
 
 ## MCP (Cursor / Codex) — stdio
 
-Prefer the MuMu wrapper (auto-detect serial):
+Prefer the device wrapper (auto-resolves serial each MCP start):
 
 ```json
 {
@@ -104,13 +106,21 @@ Prefer the MuMu wrapper (auto-detect serial):
 }
 ```
 
+`mau-mcp-with-mumu.sh` calls [`scripts/resolve-adb-serial.sh`](scripts/resolve-adb-serial.sh): keeps `MANO_DEVICE_SERIAL` only if still `device`, otherwise picks a live wireless `ip:port` / USB / MuMu serial. **Do not pin a wireless port in MCP `env`** — ports change and would go stale; pair/connect with `adb` first, then start/reconnect MCP.
+
 Templates: [`examples/mcp.cursor.json`](examples/mcp.cursor.json), [`examples/mcp.codex.toml.example`](examples/mcp.codex.toml.example).
 
 **Cursor:** Customize → MCPs → add user-level server (avoid a duplicate project `.cursor/mcp.json`). Keys stay in project `.env`.
 
-**Tools:** `doctor`, `ready`, `observe`, `find`, `launch_app`, `tap`, `swipe`, `type_text`, `press_button`, `propose_action`, `journal_tail`, `android_run`, `android_run_plan`.
+**Tool groups:**
 
-Agent hosts should follow [`docs/agent-playbook.md`](docs/agent-playbook.md). Cursor rule: [`.cursor/rules/mau-android-agent.mdc`](.cursor/rules/mau-android-agent.mdc).
+| Group | Tools |
+|-------|--------|
+| Goal / orchestration | `android_run`, `android_run_plan`, `ready`, `doctor`, `launch_app`, `journal_tail` |
+| L0 correction | `observe`, `find`, `tap`, `swipe`, `type_text`, `press_button` |
+| Debug | `propose_action` (`execute=true` deprecated; needs `MAU_ALLOW_PROPOSE_EXECUTE=1`) |
+
+Agent hosts should follow [`docs/agent-playbook.md`](docs/agent-playbook.md). Cursor rule: [`.cursor/rules/mau-android-agent.mdc`](.cursor/rules/mau-android-agent.mdc). Golden tasks: [`docs/eval-golden.md`](docs/eval-golden.md).
 
 ## Grounder models
 
@@ -148,3 +158,4 @@ docs/
 
 - Core library: [jimmywang2020/mano](https://github.com/jimmywang2020/mano)
 - Acceptance checklist: [`docs/acceptance.md`](docs/acceptance.md)
+- Next plan: [`docs/plan-next.md`](docs/plan-next.md)

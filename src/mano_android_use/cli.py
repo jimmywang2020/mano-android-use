@@ -38,11 +38,19 @@ def main(argv: list[str] | None = None) -> int:
     p_press.add_argument("button")
     p_launch = sub.add_parser("launch", help="Cold-start package")
     p_launch.add_argument("package")
-    p_prop = sub.add_parser("propose", help="Grounder propose_action on last/new screenshot")
+    p_prop = sub.add_parser(
+        "propose",
+        help="Debug: one-shot Grounder (default: do not execute; prefer mau run)",
+    )
     p_prop.add_argument("instruction")
     p_prop.add_argument("--model", default=os.getenv("MAU_GROUNDER_MODEL", ""))
     p_prop.add_argument("--image", default="", help="Existing PNG path; else observe first")
-    p_run = sub.add_parser("run", help="B-path: bounded android_run(goal) loop")
+    p_prop.add_argument(
+        "--execute",
+        action="store_true",
+        help="DEPRECATED: execute mapped action (requires MAU_ALLOW_PROPOSE_EXECUTE=1)",
+    )
+    p_run = sub.add_parser("run", help="PRIMARY: bounded android_run(goal) loop")
     p_run.add_argument("goal", help="Natural-language goal")
     p_run.add_argument("--max-steps", type=int, default=25)
     p_run.add_argument("--model", default=os.getenv("MAU_GROUNDER_MODEL", ""))
@@ -115,6 +123,7 @@ def main(argv: list[str] | None = None) -> int:
         _print(session.launch(args.package))
         return 0
     if args.cmd == "propose":
+        from .apply_action import VIA_PROPOSE_EXECUTE, apply_action
         from .grounder import Grounder, pixel_from_normalized
 
         if args.image:
@@ -128,10 +137,38 @@ def main(argv: list[str] | None = None) -> int:
         grounder = Grounder(args.model or None)
         result = grounder.propose(image, args.instruction)
         out = result.to_dict()
+        mapped = None
         if result.ok and result.action and session.last_size[0] > 0:
-            out["mapped"] = pixel_from_normalized(
+            mapped = pixel_from_normalized(
                 result.action, session.last_size[0], session.last_size[1]
             )
+            out["mapped"] = mapped
+        if args.execute:
+            out["execute_deprecated"] = True
+            allowed = os.getenv("MAU_ALLOW_PROPOSE_EXECUTE", "").strip().lower() in {
+                "1",
+                "true",
+                "yes",
+                "on",
+            }
+            if not allowed:
+                out["execution"] = {
+                    "ok": False,
+                    "code": "EXECUTE_DEPRECATED",
+                    "reason": (
+                        "mau propose --execute is deprecated; use mau run or L0 tap. "
+                        "Set MAU_ALLOW_PROPOSE_EXECUTE=1 to force."
+                    ),
+                    "via": VIA_PROPOSE_EXECUTE,
+                }
+            elif result.ok and result.action and mapped is not None:
+                out["execution"] = apply_action(
+                    session,
+                    result.action,
+                    mapped,
+                    semantic_hint=args.instruction[:120],
+                    via=VIA_PROPOSE_EXECUTE,
+                )
         _print(out)
         return 0 if result.ok else 1
     if args.cmd == "run":

@@ -167,8 +167,8 @@ class DeviceSession:
             # Host-facing: path only by default; raw base64 is expensive — expose path.
             payload["screenshot_for_host"] = True
             payload["note"] = (
-                "Screenshot saved on disk for debugging; prefer propose_action "
-                "for grounding instead of feeding PNG to the host model."
+                "Screenshot saved on disk for debugging; prefer android_run "
+                "(or propose_action for one-shot debug) instead of feeding PNG to the host model."
             )
         else:
             payload["screenshot_for_host"] = False
@@ -189,14 +189,14 @@ class DeviceSession:
         self._log({"event": "launch", "package": package})
         return {"ok": True, "package": package}
 
-    def press(self, button: str) -> dict[str, Any]:
+    def press(self, button: str, *, via: str | None = None) -> dict[str, Any]:
         action = {"action": "system_button", "button": button.upper()}
-        return self._act(action, semantic_hint=button)
+        return self._act(action, semantic_hint=button, via=via)
 
-    def tap(self, x: int, y: int, *, semantic_hint: str = "") -> dict[str, Any]:
+    def tap(self, x: int, y: int, *, semantic_hint: str = "", via: str | None = None) -> dict[str, Any]:
         self._refresh_ui_snapshot()
         action = {"action": "click", "coordinate": [x, y], "_pixel": True}
-        return self._act_pixels(action, x, y, semantic_hint=semantic_hint)
+        return self._act_pixels(action, x, y, semantic_hint=semantic_hint, via=via)
 
     def swipe(
         self,
@@ -207,6 +207,7 @@ class DeviceSession:
         *,
         duration_ms: int = 700,
         semantic_hint: str = "",
+        via: str | None = None,
     ) -> dict[str, Any]:
         self._refresh_ui_snapshot()
         action = {
@@ -223,15 +224,27 @@ class DeviceSession:
             semantic_hint=semantic_hint,
         )
         if not decision.allow:
-            self._log({"event": "swipe_blocked", **decision.to_dict()})
-            return {"ok": False, **decision.to_dict()}
+            row = {"event": "swipe_blocked", **decision.to_dict()}
+            if via:
+                row["via"] = via
+            self._log(row)
+            out = {"ok": False, **decision.to_dict()}
+            if via:
+                out["via"] = via
+            return out
         self.adb.swipe(x1, y1, x2, y2, duration_ms=duration_ms)
-        self._log({"event": "swipe", "from": [x1, y1], "to": [x2, y2]})
-        return {"ok": True}
+        row = {"event": "swipe", "from": [x1, y1], "to": [x2, y2]}
+        if via:
+            row["via"] = via
+        self._log(row)
+        out: dict[str, Any] = {"ok": True}
+        if via:
+            out["via"] = via
+        return out
 
-    def type_text(self, text: str, *, semantic_hint: str = "") -> dict[str, Any]:
+    def type_text(self, text: str, *, semantic_hint: str = "", via: str | None = None) -> dict[str, Any]:
         action = {"action": "type", "text": text}
-        return self._act(action, semantic_hint=semantic_hint or text)
+        return self._act(action, semantic_hint=semantic_hint or text, via=via)
 
     def _refresh_ui_snapshot(self) -> None:
         """Fresh XML + package before safety. Needed because each CLI invoke is a new process."""
@@ -247,7 +260,9 @@ class DeviceSession:
             except Exception as exc:  # noqa: BLE001
                 self._log({"event": "size_refresh_error", "error": str(exc)[:300]})
 
-    def _act(self, action: dict[str, Any], *, semantic_hint: str = "") -> dict[str, Any]:
+    def _act(
+        self, action: dict[str, Any], *, semantic_hint: str = "", via: str | None = None
+    ) -> dict[str, Any]:
         self._refresh_ui_snapshot()
         decision = self.safety.check_action(
             action,
@@ -256,8 +271,14 @@ class DeviceSession:
             semantic_hint=semantic_hint,
         )
         if not decision.allow:
-            self._log({"event": "act_blocked", "action": action, **decision.to_dict()})
-            return {"ok": False, **decision.to_dict()}
+            row = {"event": "act_blocked", "action": action, **decision.to_dict()}
+            if via:
+                row["via"] = via
+            self._log(row)
+            out = {"ok": False, **decision.to_dict()}
+            if via:
+                out["via"] = via
+            return out
         w, h = self.last_size
         if w <= 0 or h <= 0:
             shot = self.run_dir / f"size-{self.step}.png"
@@ -279,10 +300,25 @@ class DeviceSession:
             else:
                 execute_action(self.adb, action, w, h)
         except ManoError as exc:
-            self._log({"event": "act_error", "error": str(exc)[:500]})
-            return {"ok": False, "code": "ACT_ERROR", "reason": str(exc)[:500]}
-        self._log({"event": "act", "action": {k: v for k, v in action.items() if not str(k).startswith("_")}})
-        return {"ok": True}
+            row = {"event": "act_error", "error": str(exc)[:500]}
+            if via:
+                row["via"] = via
+            self._log(row)
+            out = {"ok": False, "code": "ACT_ERROR", "reason": str(exc)[:500]}
+            if via:
+                out["via"] = via
+            return out
+        row = {
+            "event": "act",
+            "action": {k: v for k, v in action.items() if not str(k).startswith("_")},
+        }
+        if via:
+            row["via"] = via
+        self._log(row)
+        out = {"ok": True}
+        if via:
+            out["via"] = via
+        return out
 
     def _act_pixels(
         self,
@@ -291,6 +327,7 @@ class DeviceSession:
         y: int,
         *,
         semantic_hint: str = "",
+        via: str | None = None,
     ) -> dict[str, Any]:
         decision = self.safety.check_action(
             action,
@@ -299,11 +336,23 @@ class DeviceSession:
             semantic_hint=semantic_hint,
         )
         if not decision.allow:
-            self._log({"event": "tap_blocked", "xy": [x, y], **decision.to_dict()})
-            return {"ok": False, **decision.to_dict()}
+            row = {"event": "tap_blocked", "xy": [x, y], **decision.to_dict()}
+            if via:
+                row["via"] = via
+            self._log(row)
+            out = {"ok": False, **decision.to_dict()}
+            if via:
+                out["via"] = via
+            return out
         self.adb.tap(x, y)
-        self._log({"event": "tap", "xy": [x, y], "hint": semantic_hint or None})
-        return {"ok": True}
+        row = {"event": "tap", "xy": [x, y], "hint": semantic_hint or None}
+        if via:
+            row["via"] = via
+        self._log(row)
+        out: dict[str, Any] = {"ok": True}
+        if via:
+            out["via"] = via
+        return out
 
     def _log(self, row: dict[str, Any]) -> None:
         row = {"ts_ms": _now_ms(), "run_id": self.run_id, **row}

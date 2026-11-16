@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .apply_action import VIA_ANDROID_RUN, apply_action
 from .grounder import Grounder, pixel_from_normalized
 from .session import DeviceSession
 from .success_check import SuccessCheck, evaluate_success
@@ -115,6 +116,7 @@ def android_run(
     model: str | None = None,
     package: str | None = None,
     stuck_repeat: int = 3,
+    stuck_same_summary: int = 0,
     success_check: SuccessCheck | dict[str, Any] | None = None,
     goal_context: str = "",
 ) -> RunResult:
@@ -123,6 +125,9 @@ def android_run(
     Optional ``success_check`` (package / labels_any / labels_all) is an external
     verifier: early-stop when the screen matches; veto model ``terminate:success``
     when it does not.
+
+    ``stuck_same_summary``: if > 0, stop with STUCK when the observe summary is
+    unchanged for that many consecutive steps (default 0 = disabled).
     """
     goal = (goal or "").strip()
     if isinstance(success_check, dict):
@@ -179,6 +184,7 @@ def android_run(
     grounder = Grounder(model)
     history: list[dict[str, Any]] = []
     recent: list[str] = []
+    recent_summaries: list[str] = []
     last_summary = ""
     last_package = ""
     check_feedback = ""
@@ -216,6 +222,29 @@ def android_run(
             "package": last_package,
             "observe_safety": safety,
         }
+
+        if stuck_same_summary > 0:
+            recent_summaries.append(last_summary)
+            if (
+                len(recent_summaries) >= stuck_same_summary
+                and len(set(recent_summaries[-stuck_same_summary:])) == 1
+            ):
+                entry["stop"] = TERMINAL_STUCK
+                history.append(entry)
+                session.log_event(
+                    {
+                        "event": "android_run_stop",
+                        "status": TERMINAL_STUCK,
+                        "step": step,
+                        "via": VIA_ANDROID_RUN,
+                        "reason": "unchanged_summary",
+                    }
+                )
+                return _result(
+                    TERMINAL_STUCK,
+                    steps=step,
+                    reason=f"unchanged summary x{stuck_same_summary}",
+                )
 
         if safety.get("code") == "NEED_HUMAN" or safety.get("allow") is False:
             entry["stop"] = TERMINAL_HUMAN
@@ -328,39 +357,13 @@ def android_run(
                 reason=f"repeated action {fp}",
             )
 
-        kind = str(action.get("action") or "")
-        # gui-plus sometimes emits system_button_press + button_name instead of
-        # system_button + button (seen on ColorOS / phone runs).
-        if kind in {"system_button_press", "press", "keyevent"}:
-            kind = "system_button"
-            if "button" not in action and action.get("button_name"):
-                action = {**action, "button": action.get("button_name")}
-                mapped = {**mapped, "button": action.get("button_name")}
-        exec_result: dict[str, Any]
-        if kind == "click" and "pixel" in mapped:
-            x, y = mapped["pixel"]
-            exec_result = session.tap(int(x), int(y), semantic_hint=goal[:120])
-        elif kind == "swipe" and "pixel" in mapped and "pixel2" in mapped:
-            x1, y1 = mapped["pixel"]
-            x2, y2 = mapped["pixel2"]
-            exec_result = session.swipe(int(x1), int(y1), int(x2), int(y2), semantic_hint=goal[:120])
-        elif kind == "type":
-            exec_result = session.type_text(str(action.get("text") or ""), semantic_hint=goal[:120])
-        elif kind in {"system_button", "key"}:
-            btn = str(
-                action.get("button")
-                or action.get("button_name")
-                or action.get("text")
-                or "BACK"
-            )
-            exec_result = session.press(btn)
-        elif kind == "wait":
-            import time
-
-            time.sleep(min(max(float(action.get("time") or 1), 0.2), 5.0))
-            exec_result = {"ok": True, "waited": True}
-        else:
-            exec_result = {"ok": False, "code": "UNSUPPORTED", "reason": f"kind={kind}"}
+        exec_result = apply_action(
+            session,
+            action,
+            mapped,
+            semantic_hint=goal[:120],
+            via=VIA_ANDROID_RUN,
+        )
 
         entry["execution"] = exec_result
         history.append(entry)

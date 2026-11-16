@@ -37,17 +37,29 @@ class _FakeSession:
             "screenshot_path": "/tmp/missing.png",
         }
 
-    def tap(self, x, y, semantic_hint: str = ""):
-        return {"ok": True}
+    def tap(self, x, y, semantic_hint: str = "", via: str | None = None):
+        out = {"ok": True}
+        if via:
+            out["via"] = via
+        return out
 
     def swipe(self, *a, **k):
-        return {"ok": True}
+        out = {"ok": True}
+        if k.get("via"):
+            out["via"] = k["via"]
+        return out
 
-    def type_text(self, text, semantic_hint: str = ""):
-        return {"ok": True}
+    def type_text(self, text, semantic_hint: str = "", via: str | None = None):
+        out = {"ok": True}
+        if via:
+            out["via"] = via
+        return out
 
-    def press(self, button):
-        return {"ok": True}
+    def press(self, button, via: str | None = None):
+        out = {"ok": True}
+        if via:
+            out["via"] = via
+        return out
 
     def log_event(self, row):
         self._events.append(row)
@@ -99,6 +111,43 @@ def test_stuck_on_repeated_clicks(monkeypatch):
     assert res.steps == 3
 
 
+def test_stuck_on_unchanged_summary(monkeypatch):
+    session = _FakeSession()
+
+    class _G:
+        model = "fake"
+        _n = 0
+
+        def propose(self, image, instruction):
+            from mano_android_use.grounder import GrounderResult
+
+            self._n += 1
+            # Different coordinates so action-fingerprint stuck does not fire first.
+            return GrounderResult(
+                True,
+                "fake",
+                {"action": "click", "coordinate": [self._n, self._n]},
+                "{}",
+            )
+
+    g = _G()
+
+    monkeypatch.setattr("mano_android_use.run_loop.Grounder", lambda model=None: g)
+    monkeypatch.setattr(
+        "mano_android_use.run_loop.pixel_from_normalized",
+        lambda action, w, h: {
+            "action": "click",
+            "pixel": list(action.get("coordinate") or [1, 1]),
+        },
+    )
+    res = android_run(
+        session, "noop", max_steps=10, stuck_repeat=99, stuck_same_summary=3
+    )
+    assert res.status == TERMINAL_STUCK
+    assert res.steps == 3
+    assert "unchanged summary" in res.reason
+
+
 def test_terminate_success(monkeypatch):
     session = _FakeSession()
 
@@ -124,9 +173,9 @@ def test_system_button_press_alias(monkeypatch):
     session = _FakeSession()
     pressed = []
 
-    def _press(button):
+    def _press(button, via=None):
         pressed.append(button)
-        return {"ok": True}
+        return {"ok": True, "via": via}
 
     session.press = _press  # type: ignore[method-assign]
 

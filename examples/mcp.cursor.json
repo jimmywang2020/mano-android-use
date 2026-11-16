@@ -6,7 +6,7 @@
       "env": {
         "MAU_GROUNDER_MODEL": "gui-plus-2026-02-26",
         "MAU_RUNS_DIR": "/ABS/PATH/TO/mano-android-use/runs",
-        "MCP_REV": "open-source"
+        "MCP_REV": "auto-serial"
       }
     }
   }

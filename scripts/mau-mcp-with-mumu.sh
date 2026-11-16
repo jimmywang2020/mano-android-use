@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Start MCP after auto-detecting MuMu ADB serial (no hardcoded port).
-# Use this as the MCP "command" in Cursor/Codex when driving MuMu.
+# Start MCP after resolving a live ADB serial (phone wireless / USB / MuMu).
+# Use as the MCP "command" in Cursor/Codex — do NOT pin a stale MANO_DEVICE_SERIAL
+# in MCP env unless you intend to force that device (stale values are ignored).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -15,11 +16,9 @@ else
   exit 1
 fi
 
-# If serial already set (USB device / CI), keep it; else probe MuMu.
-if [[ -z "${MANO_DEVICE_SERIAL:-}" ]]; then
-  # shellcheck disable=SC1091
-  eval "$(bash "$ROOT/scripts/mumu-adb.sh")"
-fi
+# Resolve serial every MCP start: keep env only if still "device", else re-pick.
+# shellcheck disable=SC1091
+eval "$(bash "$ROOT/scripts/resolve-adb-serial.sh")"
 
 export MAU_RUNS_DIR="${MAU_RUNS_DIR:-$ROOT/runs}"
 exec "$MAU_MCP" "$@"
