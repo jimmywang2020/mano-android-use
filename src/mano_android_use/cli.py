@@ -54,7 +54,16 @@ def main(argv: list[str] | None = None) -> int:
     p_run.add_argument("goal", help="Natural-language goal")
     p_run.add_argument("--max-steps", type=int, default=25)
     p_run.add_argument("--model", default=os.getenv("MAU_GROUNDER_MODEL", ""))
-    p_run.add_argument("--package", default="", help="Optional cold-start package before loop")
+    p_run.add_argument(
+        "--package",
+        default="",
+        help="Optional package to ensure before loop (warm by default; see --cold-start)",
+    )
+    p_run.add_argument(
+        "--cold-start",
+        action="store_true",
+        help="With --package: force-stop then launch (default is warm ensure)",
+    )
     p_run.add_argument(
         "--success-package",
         default="",
@@ -268,6 +277,7 @@ def main(argv: list[str] | None = None) -> int:
             success_check=None if check.is_empty() else check,
             tree_hints=list(args.tree_hints or []),
             stuck_same_summary=stuck_arg,
+            cold_start=bool(args.cold_start),
         )
         _print(result.to_dict())
         return 0 if result.status == TERMINAL_OK else 1

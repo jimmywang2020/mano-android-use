@@ -28,6 +28,9 @@ from .tree import compact_nodes
 
 _DEFAULT_STUCK_SAME = 3
 _SPARSE_TREE_MIN_NODES = 3
+# After a successful type, skip unchanged→BACK for this many following steps so
+# search suggestions / IME can settle without undoing the typed query.
+_TYPE_GRACE_STEPS = 2
 _QUOTED_LABEL_RE = re.compile(
     r"[「『\"“]([^」』\"”]{1,24})[」』\"”]"
 )
@@ -74,18 +77,18 @@ def ensure_observation_for_grounder(
     session: DeviceSession,
     obs: dict[str, Any],
 ) -> tuple[dict[str, Any], int, str]:
-    """Upgrade tree-only observe to shot/full before VLM. Returns (obs, ms, reason)."""
+    """Upgrade tree-only observe to one full capture before VLM.
+
+    Uses a single ``full`` (screenshot+XML) instead of tree-then-shot, so the
+    Grounder pays one ADB window rather than two.
+    """
     mode = str(obs.get("capture_mode") or "")
     shot = str(obs.get("screenshot_path") or "")
-    if mode in {"full", "shot"} and shot and Path(shot).is_file():
+    if mode == "full" and shot and Path(shot).is_file():
         return obs, 0, ""
     t0 = time.perf_counter()
-    if tree_is_sparse(obs):
-        upgraded = session.observe(detail="both", bump_step=False)
-        reason = "full_sparse_tree"
-    else:
-        upgraded = session.observe(detail="screenshot", bump_step=False)
-        reason = "shot_for_vlm"
+    upgraded = session.observe(detail="both", bump_step=False)
+    reason = "full_sparse_tree" if tree_is_sparse(obs) else "full_for_vlm"
     ms = max(0, int((time.perf_counter() - t0) * 1000))
     return upgraded, ms, reason
 
@@ -111,12 +114,14 @@ def continue_hint_for_run(
         "action": "android_run",
         "suggestion": (
             "Resume with a short android_run from the current screen; "
-            "do not cold-start unless context was lost; avoid L0 as the main loop."
+            "omit package= (or cold_start=false) so mau does not force-stop; "
+            "avoid L0 as the main loop."
         ),
         "goal": goal,
         "package": package or "",
         "last_summary": (last_summary or "")[:300],
         "recommended_max_steps": 8,
+        "cold_start": False,
         "reason": status or "",
     }
 
@@ -369,6 +374,7 @@ def android_run(
     goal_context: str = "",
     wall_budget_ms: int = 0,
     tree_hints: list[str] | None = None,
+    cold_start: bool = False,
 ) -> RunResult:
     """Run a bounded observe→propose→act loop toward ``goal``.
 
@@ -378,12 +384,17 @@ def android_run(
 
     ``stuck_same_summary``: if > 0, skip VLM on unchanged screen (recover then
     STUCK). Default 3; ``0`` disables; ``None`` reads ``MAU_STUCK_SAME_SUMMARY``.
+    After a successful ``type``, the next ``_TYPE_GRACE_STEPS`` steps skip
+    unchanged→BACK so search IME/suggestions can settle.
 
     ``tree_hints``: optional labels for tree-first find before VLM (also uses
     quoted labels inside ``goal``). Unique hit → tap with ``via=tree_shortcut``.
 
     ``wall_budget_ms``: if > 0, stop with TIME_BUDGET before the next observe once
     elapsed wall time reaches the budget (MCP soft timeout avoidance).
+
+    ``package`` + ``cold_start=False`` (default): warm ensure (skip force-stop when
+    already foreground). Pass ``cold_start=True`` only for a true relaunch.
     """
     goal = (goal or "").strip()
     stuck_same_summary = resolve_stuck_same_summary(stuck_same_summary)
@@ -426,7 +437,7 @@ def android_run(
         )
 
     if package:
-        launched = session.launch(package)
+        launched = session.launch(package, cold=bool(cold_start))
         if not launched.get("ok"):
             return RunResult(
                 status=TERMINAL_BLOCKED if launched.get("code") == "BLOCKED_BY_POLICY" else TERMINAL_ERROR,
@@ -447,6 +458,7 @@ def android_run(
     check_feedback = ""
     prev_screen_sig = ""
     unchanged_streak = 0
+    type_grace_remaining = 0
     t_run0 = time.perf_counter()
     wall_budget_ms = max(0, int(wall_budget_ms or 0))
 
@@ -537,75 +549,90 @@ def android_run(
         }
 
         if stuck_same_summary > 0 and prev_screen_sig and sig == prev_screen_sig:
-            unchanged_streak += 1
-            entry["unchanged_streak"] = unchanged_streak
-            if unchanged_streak >= stuck_same_summary:
+            if type_grace_remaining > 0:
+                # Recent type: do not BACK; let tree_shortcut / VLM continue.
+                type_grace_remaining -= 1
+                entry["type_grace"] = True
+                entry["type_grace_remaining"] = type_grace_remaining
+                unchanged_streak = 0
+                prev_screen_sig = sig
+                session.log_event(
+                    {
+                        "event": "type_grace_skip_unchanged",
+                        "step": step,
+                        "type_grace_remaining": type_grace_remaining,
+                    }
+                )
+            else:
+                unchanged_streak += 1
+                entry["unchanged_streak"] = unchanged_streak
+                if unchanged_streak >= stuck_same_summary:
+                    _record_step_timing(
+                        session,
+                        entry,
+                        step=step,
+                        model=grounder.model,
+                        observe_ms=observe_ms,
+                        vlm_skipped=True,
+                        skip_reason="unchanged_stuck",
+                        via=VIA_ANDROID_RUN,
+                    )
+                    entry["stop"] = TERMINAL_STUCK
+                    history.append(entry)
+                    session.log_event(
+                        {
+                            "event": "android_run_stop",
+                            "status": TERMINAL_STUCK,
+                            "step": step,
+                            "via": VIA_ANDROID_RUN,
+                            "reason": "unchanged_screen",
+                            "unchanged_streak": unchanged_streak,
+                        }
+                    )
+                    return _result(
+                        TERMINAL_STUCK,
+                        steps=step,
+                        reason=f"unchanged screen x{unchanged_streak}",
+                        with_continue_hint=True,
+                    )
+                # Graded recover: first unchanged → BACK; later → short wait. No VLM.
+                t_act0 = time.perf_counter()
+                if unchanged_streak == 1:
+                    exec_result = session.press("BACK", via=VIA_ANDROID_RUN)
+                    recover_action = "system_button"
+                    skip_reason = "unchanged_recover"
+                else:
+                    time.sleep(0.4)
+                    exec_result = {"ok": True, "waited": True, "via": VIA_ANDROID_RUN}
+                    recover_action = "wait"
+                    skip_reason = "unchanged_wait"
+                act_ms = max(0, int((time.perf_counter() - t_act0) * 1000))
+                entry["execution"] = exec_result
+                entry["unchanged_recover"] = skip_reason
+                session.log_event(
+                    {
+                        "event": "unchanged_recover",
+                        "step": step,
+                        "streak": unchanged_streak,
+                        "action": recover_action,
+                        "skip_reason": skip_reason,
+                    }
+                )
                 _record_step_timing(
                     session,
                     entry,
                     step=step,
                     model=grounder.model,
                     observe_ms=observe_ms,
+                    act_ms=act_ms,
+                    action={"action": recover_action},
+                    via="unchanged_recover",
                     vlm_skipped=True,
-                    skip_reason="unchanged_stuck",
-                    via=VIA_ANDROID_RUN,
+                    skip_reason=skip_reason,
                 )
-                entry["stop"] = TERMINAL_STUCK
                 history.append(entry)
-                session.log_event(
-                    {
-                        "event": "android_run_stop",
-                        "status": TERMINAL_STUCK,
-                        "step": step,
-                        "via": VIA_ANDROID_RUN,
-                        "reason": "unchanged_screen",
-                        "unchanged_streak": unchanged_streak,
-                    }
-                )
-                return _result(
-                    TERMINAL_STUCK,
-                    steps=step,
-                    reason=f"unchanged screen x{unchanged_streak}",
-                    with_continue_hint=True,
-                )
-            # Graded recover: first unchanged → BACK; later → short wait. No VLM.
-            t_act0 = time.perf_counter()
-            if unchanged_streak == 1:
-                exec_result = session.press("BACK", via=VIA_ANDROID_RUN)
-                recover_action = "system_button"
-                skip_reason = "unchanged_recover"
-            else:
-                time.sleep(0.4)
-                exec_result = {"ok": True, "waited": True, "via": VIA_ANDROID_RUN}
-                recover_action = "wait"
-                skip_reason = "unchanged_wait"
-            act_ms = max(0, int((time.perf_counter() - t_act0) * 1000))
-            entry["execution"] = exec_result
-            entry["unchanged_recover"] = skip_reason
-            session.log_event(
-                {
-                    "event": "unchanged_recover",
-                    "step": step,
-                    "streak": unchanged_streak,
-                    "action": recover_action,
-                    "skip_reason": skip_reason,
-                }
-            )
-            _record_step_timing(
-                session,
-                entry,
-                step=step,
-                model=grounder.model,
-                observe_ms=observe_ms,
-                act_ms=act_ms,
-                action={"action": recover_action},
-                via="unchanged_recover",
-                vlm_skipped=True,
-                skip_reason=skip_reason,
-            )
-            history.append(entry)
-            # Keep prev_screen_sig so next observe can extend the streak.
-            continue
+                # Keep prev_screen_sig so next observe can extend the streak.
+                continue
         else:
             unchanged_streak = 0
             prev_screen_sig = sig
@@ -883,6 +910,9 @@ def android_run(
         act_ms = max(0, int((time.perf_counter() - t_act0) * 1000))
 
         entry["execution"] = exec_result
+        if exec_result.get("ok") and str(action.get("action") or "") == "type":
+            type_grace_remaining = _TYPE_GRACE_STEPS
+            entry["type_grace_armed"] = type_grace_remaining
         _record_step_timing(
             session,
             entry,

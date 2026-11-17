@@ -248,14 +248,19 @@ def android_run(
     success_labels_all: str = "",
     tree_hints: str = "",
     stuck_same_summary: int = -1,
+    cold_start: bool = False,
 ) -> str:
     """PRIMARY: bounded observe→propose→act loop toward a natural-language goal.
 
     Host picks the goal; mau orchestrates the loop; Grounder sees screenshots; L0 acts.
     MCP defaults: max_steps=10, wall soft-budget ~90s → may return TIME_BUDGET +
     cost_report + continue_hint (re-call short android_run; do not switch to L0 loop).
-    Unchanged screen (default): skip VLM, recover once (BACK) then STUCK.
+    Unchanged screen (default): skip VLM, recover once (BACK) then STUCK — but not
+    for a few steps after type (search IME grace).
     tree_hints: comma-separated labels for tree-first tap before VLM (also uses「quoted」in goal).
+    package=: warm-ensure by default (no force-stop if already foreground). Set
+    cold_start=true only for a true relaunch. On TIME_BUDGET resume, omit package=
+    or keep cold_start=false.
     Long jobs: multiple short MCP calls or CLI `mau run` / `mau run-plan`.
     Response includes cost_report: total_ms, tokens, by_phase, vlm_skipped, by_via,
     per_step, and narrative — always relay cost_report.narrative (+ dominant_phase) to the user.
@@ -291,6 +296,7 @@ def android_run(
         wall_budget_ms=_MCP_WALL_BUDGET_MS,
         tree_hints=_split(tree_hints),
         stuck_same_summary=stuck_arg,
+        cold_start=bool(cold_start),
     )
     return _dumps(result.to_dict())
 

@@ -244,13 +244,47 @@ class DeviceSession:
         hits = find_by_text(self.last_xml, query, limit=limit)
         return {"query": query, "count": len(hits), "hits": hits}
 
-    def launch(self, package: str) -> dict[str, Any]:
+    def launch(self, package: str, *, cold: bool = False) -> dict[str, Any]:
+        """Bring ``package`` to foreground.
+
+        Default ``cold=False`` (warm): if already foreground, no-op; otherwise
+        launcher intent without ``force-stop``. Pass ``cold=True`` only when a
+        true relaunch is required (force-stop + start).
+        """
         decision = self.safety.check_package(package)
         if not decision.allow:
             return {"ok": False, **decision.to_dict()}
-        self.adb.cold_start(package)
-        self._log({"event": "launch", "package": package})
-        return {"ok": True, "package": package}
+        pkg = (package or "").strip()
+        if not cold:
+            try:
+                fg = self.adb.foreground_package()
+            except Exception:  # noqa: BLE001
+                fg = ""
+            if fg == pkg:
+                self._log(
+                    {
+                        "event": "launch",
+                        "package": pkg,
+                        "mode": "already_foreground",
+                        "cold": False,
+                    }
+                )
+                return {"ok": True, "package": pkg, "mode": "already_foreground"}
+            # Warm bring-to-front: monkey without force-stop.
+            self.adb.shell(
+                "monkey",
+                "-p",
+                pkg,
+                "-c",
+                "android.intent.category.LAUNCHER",
+                "1",
+            )
+            time.sleep(1.5)
+            self._log({"event": "launch", "package": pkg, "mode": "warm", "cold": False})
+            return {"ok": True, "package": pkg, "mode": "warm"}
+        self.adb.cold_start(pkg)
+        self._log({"event": "launch", "package": pkg, "mode": "cold", "cold": True})
+        return {"ok": True, "package": pkg, "mode": "cold"}
 
     def _log_l0_span_if_direct(self, *, action: str, act_ms: int, via: str | None) -> None:
         """Bypass timing span for direct L0 only (not android_run / propose_execute)."""

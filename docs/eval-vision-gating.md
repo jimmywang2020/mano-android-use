@@ -23,7 +23,9 @@ Optional baseline (disable gating):
 | U2 | `mau run "打开设置" --package com.android.settings --max-steps 8` | Still reachable; at most one recover; not false STUCK on progress |
 | T1 | `mau run '打开「设置」' --tree-hint 设置 --max-steps 6` (or launcher with visible 设置) | Journal/`cost_report` has `via=tree_shortcut`; that step `grounder_ms=0` |
 | T2 | WebView-heavy flow (e.g. Fliggy search page) without useful tree labels | Still uses VLM; no endless empty `find` loop; upgrade reason `full_sparse_tree` ok |
-| O1 | Any gated run (U1/T1) | `tree_shortcut` / unchanged steps: journal `observe` events are `capture_mode=tree` (no PNG); VLM steps show `shot` or `full` upgrade |
+| O1 | Any gated run (U1/T1) | `tree_shortcut` / unchanged steps: journal `observe` events are `capture_mode=tree` (no PNG); VLM steps show one `full` upgrade (not tree+shot) |
+| O2 | Type into Meituan search then same summary | No immediate `unchanged_recover` BACK; journal has `type_grace` / `type_grace_skip_unchanged` |
+| O3 | Resume `android_run` with `package=` while app foreground | Journal `launch.mode=already_foreground` or `warm` (not `cold`) unless `cold_start=true` |
 | C1 | Compare U1/T1 vs baseline `cost_report` | U1/T1: lower `prompt_tokens` and/or `grounder` share; narrative mentions VLM skipped / bypass; observe split shows `xml` vs `screenshot` |
 
 ## Record

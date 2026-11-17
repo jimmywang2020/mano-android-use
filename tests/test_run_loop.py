@@ -60,8 +60,10 @@ class _FakeSession:
                 break
         return {"query": query, "count": len(hits), "hits": hits}
 
-    def launch(self, package: str):
-        return {"ok": True, "package": package}
+    def launch(self, package: str, *, cold: bool = False):
+        self._launches = getattr(self, "_launches", [])
+        self._launches.append({"package": package, "cold": cold})
+        return {"ok": True, "package": package, "mode": "cold" if cold else "warm"}
 
     def observe(
         self,
@@ -520,7 +522,7 @@ def test_tree_is_sparse():
     )
 
 
-def test_vlm_path_upgrades_tree_to_shot(monkeypatch, tmp_path: Path):
+def test_vlm_path_upgrades_tree_to_full(monkeypatch, tmp_path: Path):
     session = _FakeSession(run_dir=tmp_path)
 
     class _G:
@@ -542,11 +544,11 @@ def test_vlm_path_upgrades_tree_to_shot(monkeypatch, tmp_path: Path):
     assert res.status == TERMINAL_OK
     modes = [c["mode"] for c in session._observe_calls]
     assert modes[0] == "tree"
-    assert "shot" in modes
-    assert "full" not in modes
-    assert res.history[0].get("observe_upgrade") == "shot_for_vlm"
+    assert "full" in modes
+    assert "shot" not in modes  # single full upgrade, not tree-then-shot
+    assert res.history[0].get("observe_upgrade") == "full_for_vlm"
     timing = res.history[0]["timing"]
-    assert timing.get("observe_mode") == "shot"
+    assert timing.get("observe_mode") == "full"
     assert int(timing.get("observe_xml_ms") or 0) >= 0
     assert int(timing.get("observe_screenshot_ms") or 0) >= 0
 
@@ -635,6 +637,86 @@ def test_tree_shortcut_never_full_observe(monkeypatch, tmp_path: Path):
         stuck_same_summary=0,
     )
     assert res.status == TERMINAL_OK
-    # First step tree_shortcut: tree only. Second step VLM: tree then shot (not full).
+    # First step tree_shortcut: tree only. Second step VLM: tree then one full.
     assert session._observe_calls[0]["mode"] == "tree"
-    assert all(c["mode"] != "full" for c in session._observe_calls)
+    assert session._observe_calls[0]["mode"] != "full"
+    assert any(c["mode"] == "full" for c in session._observe_calls[1:])
+
+
+def test_type_grace_skips_unchanged_back(monkeypatch, tmp_path: Path):
+    """After type, same screen signature must not trigger BACK recover."""
+    session = _FakeSession(run_dir=tmp_path)
+    n = {"i": 0}
+
+    class _G:
+        model = "fake"
+
+        def propose(self, image, instruction):
+            from mano_android_use.grounder import GrounderResult
+
+            n["i"] += 1
+            if n["i"] == 1:
+                return GrounderResult(
+                    True, "fake", {"action": "type", "text": "柠檬茶"}, "{}"
+                )
+            return GrounderResult(
+                True,
+                "fake",
+                {"action": "terminate", "status": "success"},
+                "{}",
+            )
+
+    monkeypatch.setattr("mano_android_use.run_loop.Grounder", lambda model=None: _G())
+    res = android_run(
+        session,
+        "search lemon tea",
+        max_steps=5,
+        stuck_same_summary=3,
+        stuck_repeat=99,
+    )
+    assert res.status == TERMINAL_OK
+    assert n["i"] >= 2  # second propose happened (not BACK-stuck)
+    assert not any(e.get("via") == "unchanged_recover" for e in session._events)
+    assert any(h.get("type_grace_armed") for h in res.history)
+    assert any(h.get("type_grace") for h in res.history)
+
+
+def test_package_defaults_to_warm_launch(monkeypatch, tmp_path: Path):
+    session = _FakeSession(run_dir=tmp_path)
+
+    class _G:
+        model = "fake"
+
+        def propose(self, image, instruction):
+            from mano_android_use.grounder import GrounderResult
+
+            return GrounderResult(
+                True,
+                "fake",
+                {"action": "terminate", "status": "success"},
+                "{}",
+            )
+
+    monkeypatch.setattr("mano_android_use.run_loop.Grounder", lambda model=None: _G())
+    res = android_run(
+        session,
+        "done",
+        max_steps=2,
+        package="com.sankuai.meituan",
+        stuck_same_summary=0,
+    )
+    assert res.status == TERMINAL_OK
+    assert session._launches == [{"package": "com.sankuai.meituan", "cold": False}]
+
+    session2 = _FakeSession(run_dir=tmp_path / "cold")
+    monkeypatch.setattr("mano_android_use.run_loop.Grounder", lambda model=None: _G())
+    res2 = android_run(
+        session2,
+        "done",
+        max_steps=2,
+        package="com.sankuai.meituan",
+        cold_start=True,
+        stuck_same_summary=0,
+    )
+    assert res2.status == TERMINAL_OK
+    assert session2._launches == [{"package": "com.sankuai.meituan", "cold": True}]

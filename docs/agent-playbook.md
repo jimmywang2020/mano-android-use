@@ -49,11 +49,15 @@ Inside `android_run` (default `stuck_same_summary=3`, override with `0` / env `M
    (`package` + summary, plus tree fingerprint when summary is thin).
 2. If signature **unchanged** vs previous step: **do not call VLM** and **do not take a
    screenshot** — first time `BACK` recover, then short wait, then `STUCK` + `continue_hint`.
+   Exception: after a successful `type`, the next few steps skip unchanged→BACK (IME/search grace).
 3. Before VLM: try **tree-first** — `tree_hints` and/or「quoted」labels in the goal; unique `find`
    hit → tap with `via=tree_shortcut` (`grounder_ms=0`, still no PNG).
-4. Only when VLM is required: upgrade observe — `shot` if the tree is useful, or `full` when
-   the tree is empty/sparse (typical WebView). `cost_report` shows observe split
-   (`screenshot_ms` / `xml_ms` / modes).
+4. Only when VLM is required: **one** upgrade to `full` (screenshot+XML in one window) —
+   not tree-then-shot. `cost_report` shows observe split (`screenshot_ms` / `xml_ms` / modes).
+
+`package=` on `android_run` is **warm** by default (no force-stop if already foreground).
+Use `cold_start=true` / CLI `--cold-start` / `launch_app` only for a true relaunch. On
+`TIME_BUDGET` resume, omit `package=` when the app is already open.
 
 Host should pass stable labels when known (e.g. `tree_hints=设置` or goal `打开「设置」`).
 MCP `observe(detail=tree|screenshot|both)` maps to Core `tree|shot|full`.
