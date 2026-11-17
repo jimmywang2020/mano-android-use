@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from pathlib import Path
 from typing import Any
 
@@ -13,10 +14,20 @@ from .apply_action import VIA_L0_DIRECT, VIA_PROPOSE_EXECUTE, apply_action
 from .envfile import load_dotenv
 from .grounder import Grounder, pixel_from_normalized
 from .session import DeviceSession
+from .trace_report import (
+    EVENT_PROPOSE_STEP,
+    build_step_span,
+    cost_report_from_doc,
+)
 
 load_dotenv()
 
 mcp = MCPServer("mano-android-use")
+
+# Soft wall-clock budget for MCP so Host -32001 empty timeouts are less likely.
+# CLI keeps larger max_steps and wall_budget_ms=0 by default.
+_MCP_WALL_BUDGET_MS = 90_000
+_MCP_DEFAULT_MAX_STEPS = 10
 
 _SESSION: DeviceSession | None = None
 
@@ -149,41 +160,73 @@ def propose_action(instruction: str, model: str = "", execute: bool = False) -> 
     Default path for goals: android_run or android_run_plan.
     execute=true is DEPRECATED — ignored unless MAU_ALLOW_PROPOSE_EXECUTE=1.
     Prefer android_run (orchestration) or L0 tap/swipe/type/press (correction).
+    Returns timing + cost_fragment (propose_step journal span).
     """
     session = _session()
+    t0 = time.perf_counter()
     obs = session.observe(detail="tree")
+    observe_ms = int((time.perf_counter() - t0) * 1000)
     image = Path(obs["screenshot_path"])
 
     grounder = Grounder(model or None)
+    t1 = time.perf_counter()
     result = grounder.propose(image, instruction)
+    grounder_ms = int(result.latency_ms or ((time.perf_counter() - t1) * 1000))
     out = result.to_dict()
     out["observation_step"] = obs.get("step")
     out["package"] = obs.get("package")
-    if not result.ok or not result.action:
-        return _dumps(out)
 
-    mapped = pixel_from_normalized(result.action, session.last_size[0], session.last_size[1])
-    out["mapped"] = mapped
-    if execute:
-        out["execute_deprecated"] = True
-        if not _propose_execute_allowed():
-            out["execution"] = {
-                "ok": False,
-                "code": "EXECUTE_DEPRECATED",
-                "reason": (
-                    "propose_action(execute=true) is deprecated; use android_run or "
-                    "L0 tap/swipe/type/press. Set MAU_ALLOW_PROPOSE_EXECUTE=1 to force."
-                ),
-                "via": VIA_PROPOSE_EXECUTE,
-            }
-        else:
-            out["execution"] = apply_action(
-                session,
-                result.action,
-                mapped,
-                semantic_hint=instruction[:120],
-                via=VIA_PROPOSE_EXECUTE,
-            )
+    via = "propose"
+    act_ms = 0
+    action_name = ""
+    if result.ok and result.action:
+        action_name = str(result.action.get("action") or "")
+        mapped = pixel_from_normalized(
+            result.action, session.last_size[0], session.last_size[1]
+        )
+        out["mapped"] = mapped
+        if execute:
+            out["execute_deprecated"] = True
+            if not _propose_execute_allowed():
+                out["execution"] = {
+                    "ok": False,
+                    "code": "EXECUTE_DEPRECATED",
+                    "reason": (
+                        "propose_action(execute=true) is deprecated; use android_run or "
+                        "L0 tap/swipe/type/press. Set MAU_ALLOW_PROPOSE_EXECUTE=1 to force."
+                    ),
+                    "via": VIA_PROPOSE_EXECUTE,
+                }
+            else:
+                via = VIA_PROPOSE_EXECUTE
+                t2 = time.perf_counter()
+                out["execution"] = apply_action(
+                    session,
+                    result.action,
+                    mapped,
+                    semantic_hint=instruction[:120],
+                    via=VIA_PROPOSE_EXECUTE,
+                )
+                act_ms = int((time.perf_counter() - t2) * 1000)
+
+    timing = build_step_span(
+        step=int(obs.get("step") or session.step or 0),
+        model=grounder.model,
+        observe_ms=observe_ms,
+        grounder_ms=grounder_ms,
+        act_ms=act_ms,
+        prompt_tokens=int(result.prompt_tokens or 0),
+        completion_tokens=int(result.completion_tokens or 0),
+        grounder_calls=int(result.call_count or 1),
+        action=action_name,
+        via=via,
+        event=EVENT_PROPOSE_STEP,
+    )
+    session.log_event(dict(timing))
+    out["timing"] = timing
+    out["cost_fragment"] = cost_report_from_doc(
+        {"steps": [timing], "totals": None}
+    )
     return _dumps(out)
 
 
@@ -196,7 +239,7 @@ def journal_tail(n: int = 20) -> str:
 @mcp.tool()
 def android_run(
     goal: str,
-    max_steps: int = 25,
+    max_steps: int = _MCP_DEFAULT_MAX_STEPS,
     model: str = "",
     package: str = "",
     success_package: str = "",
@@ -206,6 +249,11 @@ def android_run(
     """PRIMARY: bounded observe→propose→act loop toward a natural-language goal.
 
     Host picks the goal; mau orchestrates the loop; Grounder sees screenshots; L0 acts.
+    MCP defaults: max_steps=10, wall soft-budget ~90s → may return TIME_BUDGET +
+    cost_report + continue_hint (re-call short android_run; do not switch to L0 loop).
+    Long jobs: multiple short MCP calls or CLI `mau run` / `mau run-plan`.
+    Response includes cost_report: total_ms, tokens, by_phase (observe/grounder/act),
+    per_step, and narrative — always relay cost_report.narrative (+ dominant_phase) to the user.
     Playbook:
     - Known app → set package= (e.g. ctrip.android.view); avoid browser+中文 search.
     - Optional success_check: success_package + success_labels_any/all (comma-separated).
@@ -213,7 +261,7 @@ def android_run(
     - Long / multi-stage goals → prefer android_run_plan with short max_steps per stage.
     - Tries KEYCODE_WAKEUP once if asleep; still off → NEED_HUMAN (unlock manually).
     - Chinese typing needs AdbKeyboard (see ready.tips); install dialogs are not this tool.
-    - Stops on payment/submit (NEED_HUMAN / BLOCKED_BY_POLICY), stuck, budget, errors.
+    - Stops on payment/submit (NEED_HUMAN / BLOCKED_BY_POLICY), stuck, budget, TIME_BUDGET, errors.
     See docs/agent-playbook.md and docs/examples/ctrip-beijing-homestay.md.
     """
     from .run_loop import android_run as _android_run
@@ -234,6 +282,7 @@ def android_run(
         model=model or None,
         package=package or None,
         success_check=None if check.is_empty() else check,
+        wall_budget_ms=_MCP_WALL_BUDGET_MS,
     )
     return _dumps(result.to_dict())
 
@@ -244,6 +293,10 @@ def android_run_plan(plan_path: str = "", plan_json: str = "", model: str = "") 
 
     App-agnostic — Ctrip/Meituan differ only by plan data. Prefer short stages over one
     huge android_run goal. Provide plan_path (repo-relative or absolute) or plan_json.
+    Each stage uses ~90s MCP wall soft-budget; TIME_BUDGET stops later stages and returns
+    partial cost_report + continue_hint (resume stage / CLI mau run-plan for long jobs).
+    Response includes cost_report with plan totals + per-stage narratives; always tell the
+    user cost_report.narrative and each stage's time/tokens/dominant_phase.
     Examples: docs/examples/plans/ctrip-beijing-homestay.json,
     docs/examples/plans/meituan-guotiao-takeout.json.
     """
@@ -274,7 +327,11 @@ def android_run_plan(plan_path: str = "", plan_json: str = "", model: str = "") 
         )
 
     result = android_run_plan(
-        _session(), stages, plan_id=plan_id, model=model or None
+        _session(),
+        stages,
+        plan_id=plan_id,
+        model=model or None,
+        wall_budget_ms=_MCP_WALL_BUDGET_MS,
     )
     out = result.to_dict()
     out["ok"] = result.status == TERMINAL_OK

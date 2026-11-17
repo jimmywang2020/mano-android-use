@@ -60,6 +60,10 @@ class GrounderResult:
     action: dict[str, Any] | None
     raw: str
     error: str | None = None
+    latency_ms: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    call_count: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -68,6 +72,10 @@ class GrounderResult:
             "action": self.action,
             "raw": self.raw[:2000],
             "error": self.error,
+            "latency_ms": self.latency_ms,
+            "prompt_tokens": self.prompt_tokens,
+            "completion_tokens": self.completion_tokens,
+            "call_count": self.call_count,
         }
 
 
@@ -139,18 +147,36 @@ class Grounder:
         self._client.model = self.model
         self._client.endpoint = endpoint_from_base(base)
 
+    def _client_usage_snapshot(self) -> tuple[int, int, int]:
+        return (
+            int(getattr(self._client, "prompt_tokens", 0) or 0),
+            int(getattr(self._client, "completion_tokens", 0) or 0),
+            int(getattr(self._client, "call_count", 0) or 0),
+        )
+
     def propose(self, image: Path, instruction: str) -> GrounderResult:
         image = Path(image)
+        t0 = time.perf_counter()
+        pt0, ct0, cc0 = self._client_usage_snapshot()
+
+        def _finish(result: GrounderResult) -> GrounderResult:
+            pt1, ct1, cc1 = self._client_usage_snapshot()
+            result.latency_ms = max(0, int((time.perf_counter() - t0) * 1000))
+            result.prompt_tokens = max(0, pt1 - pt0)
+            result.completion_tokens = max(0, ct1 - ct0)
+            result.call_count = max(0, cc1 - cc0)
+            return result
+
         if not image.is_file():
-            return GrounderResult(False, self.model, None, "", f"missing image: {image}")
+            return _finish(GrounderResult(False, self.model, None, "", f"missing image: {image}"))
         try:
             if self.model.startswith("gui-plus"):
                 raw, action = self._propose_gui_plus(image, instruction)
-                return GrounderResult(True, self.model, action, raw)
+                return _finish(GrounderResult(True, self.model, action, raw))
             raw, action = self._propose_glm_style(image, instruction)
-            return GrounderResult(True, self.model, action, raw)
+            return _finish(GrounderResult(True, self.model, action, raw))
         except ManoError as exc:
-            return GrounderResult(False, self.model, None, "", str(exc)[:800])
+            return _finish(GrounderResult(False, self.model, None, "", str(exc)[:800]))
 
     def _propose_gui_plus(self, image: Path, instruction: str) -> tuple[str, dict[str, Any]]:
         """Like mano.runner.propose_action but parse via normalize_action.

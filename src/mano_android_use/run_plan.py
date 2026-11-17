@@ -14,9 +14,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .run_loop import TERMINAL_OK, RunResult, android_run
+from .run_loop import (
+    TERMINAL_OK,
+    TERMINAL_TIME_BUDGET,
+    RunResult,
+    android_run,
+    continue_hint_for_run,
+)
 from .session import DeviceSession
 from .success_check import SuccessCheck
+from .trace_report import plan_cost_report
 
 
 @dataclass
@@ -112,6 +119,8 @@ class PlanResult:
     run_dir: str = ""
     reason: str = ""
     plan_state: dict[str, Any] | None = None
+    cost_report: dict[str, Any] | None = None
+    continue_hint: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         out = {
@@ -126,6 +135,10 @@ class PlanResult:
         }
         if self.plan_state is not None:
             out["plan_state"] = self.plan_state
+        if self.cost_report is not None:
+            out["cost_report"] = self.cost_report
+        if self.continue_hint is not None:
+            out["continue_hint"] = self.continue_hint
         return out
 
 
@@ -144,11 +157,14 @@ def android_run_plan(
     *,
     plan_id: str = "plan",
     model: str | None = None,
+    wall_budget_ms: int = 0,
 ) -> PlanResult:
     """Run stages sequentially on one session; stop on first non-OK stage.
 
     Between stages, ``PlanState`` is injected into the next stage's grounder
     prompt so the model continues from the current screen.
+
+    ``wall_budget_ms`` is passed to each stage ``android_run`` (MCP soft budget).
     """
     if not stages:
         return PlanResult(
@@ -162,7 +178,7 @@ def android_run_plan(
     state = PlanState()
     stage_rows: list[dict[str, Any]] = []
 
-    for stage in stages:
+    for idx, stage in enumerate(stages):
         ctx = state.as_goal_context(current_stage_id=stage.id)
         # package= only when the stage sets it (usually stage A cold-start).
         result: RunResult = android_run(
@@ -173,6 +189,7 @@ def android_run_plan(
             package=stage.package,
             success_check=stage.success_check,
             goal_context=ctx,
+            wall_budget_ms=wall_budget_ms,
         )
         row = {
             "id": stage.id,
@@ -187,6 +204,25 @@ def android_run_plan(
         state.last_reason = result.reason or state.last_reason
 
         if result.status != TERMINAL_OK:
+            remaining = [s.id for s in stages[idx + 1 :]]
+            hint = result.continue_hint or continue_hint_for_run(
+                goal=stage.goal,
+                package=result.package,
+                last_summary=result.last_summary,
+                status=result.status,
+            )
+            if result.status == TERMINAL_TIME_BUDGET:
+                hint = {
+                    **hint,
+                    "failed_stage_id": stage.id,
+                    "resume_stage_id": stage.id,
+                    "remaining_stage_ids": [stage.id, *remaining],
+                    "suggestion": (
+                        f"Stage {stage.id} hit TIME_BUDGET. Re-call android_run or a short "
+                        f"plan starting at stage {stage.id} from the current screen; "
+                        "prefer CLI mau run-plan for very long jobs."
+                    ),
+                }
             return PlanResult(
                 status=result.status,
                 plan_id=plan_id,
@@ -197,6 +233,8 @@ def android_run_plan(
                 run_dir=str(session.run_dir),
                 reason=f"stage {stage.id} → {result.status}: {result.reason}",
                 plan_state=state.to_dict(),
+                cost_report=plan_cost_report(stage_rows),
+                continue_hint=hint,
             )
         state.completed_stage_ids.append(stage.id)
 
@@ -210,4 +248,5 @@ def android_run_plan(
         run_dir=str(session.run_dir),
         reason="all stages GOAL_REACHED",
         plan_state=state.to_dict(),
+        cost_report=plan_cost_report(stage_rows),
     )

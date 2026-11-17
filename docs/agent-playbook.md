@@ -30,6 +30,17 @@ That duplicates mau’s B-path and causes long Host round-trips / empty spinning
 
 `propose_action(execute=true)` is **deprecated** (requires `MAU_ALLOW_PROPOSE_EXECUTE=1`).
 
+### MCP soft budget (avoid Host `-32001`)
+
+MCP `android_run` defaults to **short** calls (`max_steps=10`, wall soft-budget ~**90s**). When the
+budget is hit, mau returns `TIME_BUDGET` with `cost_report` + `continue_hint` instead of hanging
+until the Host times out empty.
+
+- On `TIME_BUDGET` / timeout: **resume with another short `android_run`** (same package, current
+  screen) — do **not** switch the main loop to L0 / `propose_action`.
+- Very long jobs: prefer CLI `mau run` / `mau run-plan` (no MCP soft budget by default), or
+  multiple short MCP stages via `android_run_plan`.
+
 ## Open an app
 
 | Situation | Do this |
@@ -70,6 +81,25 @@ uv run mau ready
 ```
 
 Update `~/.cursor/mcp.json` `env.MANO_DEVICE_SERIAL` the same way; bump `MCP_REV` if tools look stale.
+
+## Cost / timing (always surface to the human)
+
+`android_run` and `android_run_plan` JSON include **`cost_report`**:
+
+| Field | Meaning |
+|-------|---------|
+| `narrative` | One-line summary — quote this to the user |
+| `by_phase.observe` | ADB screenshot + accessibility tree |
+| `by_phase.grounder` | VLM propose (**only** phase that uses tokens) |
+| `by_phase.act` | L0 tap / swipe / type / press |
+| `by_via` | Rollup by path: `android_run` / `propose` / `l0_direct` / `propose_execute` |
+| `per_step` / `stages` | Per loop step or per plan stage |
+
+Journal span events: `android_run_step` (main KPI), plus bypass `propose_step` / `l0_step`.
+`mau trace` shows the whole run_dir journal (including later L0/propose) with a `via` column.
+`android_run` internal taps do **not** emit duplicate `l0_step`.
+
+Host must report totals + which phase dominated after each run (no separate UI needed).
 
 ## success_check (prefer for “正确”)
 

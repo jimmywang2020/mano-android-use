@@ -83,8 +83,40 @@ def main(argv: list[str] | None = None) -> int:
         help="Path to plan JSON (e.g. docs/examples/plans/ctrip-beijing-homestay.json)",
     )
     p_plan.add_argument("--model", default=os.getenv("MAU_GROUNDER_MODEL", ""))
+    p_trace = sub.add_parser(
+        "trace",
+        help="Summarize android_run step timings/tokens from runs/<id> (trace.json / journal)",
+    )
+    p_trace.add_argument(
+        "target",
+        nargs="?",
+        default="",
+        help="Run dir, trace.json, or journal.jsonl (default: newest under --runs)",
+    )
+    p_trace.add_argument(
+        "--json",
+        action="store_true",
+        dest="as_json",
+        help="Print full trace JSON instead of a table",
+    )
 
     args = parser.parse_args(argv)
+
+    # Read-only: no device session required.
+    if args.cmd == "trace":
+        from .trace_report import format_trace_table, load_trace, resolve_trace_target
+
+        try:
+            run_dir = resolve_trace_target(args.target or None, runs_root=args.runs)
+            doc = load_trace(run_dir)
+        except FileNotFoundError as exc:
+            _print({"ok": False, "code": "TRACE_NOT_FOUND", "reason": str(exc)})
+            return 1
+        if args.as_json:
+            _print(doc)
+        else:
+            print(format_trace_table(doc))
+        return 0
 
     from mano.errors import ManoError
 
@@ -123,22 +155,36 @@ def main(argv: list[str] | None = None) -> int:
         _print(session.launch(args.package))
         return 0
     if args.cmd == "propose":
+        import time
+
         from .apply_action import VIA_PROPOSE_EXECUTE, apply_action
         from .grounder import Grounder, pixel_from_normalized
+        from .trace_report import EVENT_PROPOSE_STEP, build_step_span, cost_report_from_doc
 
+        observe_ms = 0
         if args.image:
             image = Path(args.image)
             # Ensure size known
             if session.last_size == (0, 0):
+                t0 = time.perf_counter()
                 session.observe(detail="tree")
+                observe_ms = int((time.perf_counter() - t0) * 1000)
         else:
+            t0 = time.perf_counter()
             obs = session.observe(detail="tree")
+            observe_ms = int((time.perf_counter() - t0) * 1000)
             image = Path(obs["screenshot_path"])
         grounder = Grounder(args.model or None)
+        t1 = time.perf_counter()
         result = grounder.propose(image, args.instruction)
+        grounder_ms = int(result.latency_ms or ((time.perf_counter() - t1) * 1000))
         out = result.to_dict()
         mapped = None
+        via = "propose"
+        act_ms = 0
+        action_name = ""
         if result.ok and result.action and session.last_size[0] > 0:
+            action_name = str(result.action.get("action") or "")
             mapped = pixel_from_normalized(
                 result.action, session.last_size[0], session.last_size[1]
             )
@@ -162,6 +208,8 @@ def main(argv: list[str] | None = None) -> int:
                     "via": VIA_PROPOSE_EXECUTE,
                 }
             elif result.ok and result.action and mapped is not None:
+                via = VIA_PROPOSE_EXECUTE
+                t2 = time.perf_counter()
                 out["execution"] = apply_action(
                     session,
                     result.action,
@@ -169,6 +217,23 @@ def main(argv: list[str] | None = None) -> int:
                     semantic_hint=args.instruction[:120],
                     via=VIA_PROPOSE_EXECUTE,
                 )
+                act_ms = int((time.perf_counter() - t2) * 1000)
+        timing = build_step_span(
+            step=session.step,
+            model=grounder.model,
+            observe_ms=observe_ms,
+            grounder_ms=grounder_ms,
+            act_ms=act_ms,
+            prompt_tokens=int(result.prompt_tokens or 0),
+            completion_tokens=int(result.completion_tokens or 0),
+            grounder_calls=int(result.call_count or 1),
+            action=action_name,
+            via=via,
+            event=EVENT_PROPOSE_STEP,
+        )
+        session.log_event(dict(timing))
+        out["timing"] = timing
+        out["cost_fragment"] = cost_report_from_doc({"steps": [timing]})
         _print(out)
         return 0 if result.ok else 1
     if args.cmd == "run":

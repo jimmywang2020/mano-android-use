@@ -17,3 +17,4 @@ def test_build_tips_ime_and_screen():
     assert any("AdbKeyboard" in t for t in tips)
     assert any("asleep" in t.lower() or "off" in t.lower() for t in tips)
     assert PLAYBOOK_LINES[0] in tips
+    assert any("TIME_BUDGET" in t or "90s" in t for t in tips)

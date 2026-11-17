@@ -16,9 +16,11 @@ from mano.media import png_size
 from mano.observation import capture_observation
 from mano.text_input import OpenAtxAdbKeyboardBackend
 
+from .apply_action import VIA_L0_DIRECT
 from .display import ensure_awake, screen_state
 from .safety import SafetyDecision, SafetyGateway
 from .tips import build_tips
+from .trace_report import EVENT_L0_STEP, build_step_span
 from .tree import compact_nodes, find_by_text, summarize
 
 
@@ -189,6 +191,22 @@ class DeviceSession:
         self._log({"event": "launch", "package": package})
         return {"ok": True, "package": package}
 
+    def _log_l0_span_if_direct(self, *, action: str, act_ms: int, via: str | None) -> None:
+        """Bypass timing span for direct L0 only (not android_run / propose_execute)."""
+        if via != VIA_L0_DIRECT:
+            return
+        span = build_step_span(
+            step=self.step,
+            model="",
+            observe_ms=0,
+            grounder_ms=0,
+            act_ms=max(0, int(act_ms)),
+            action=action,
+            via=VIA_L0_DIRECT,
+            event=EVENT_L0_STEP,
+        )
+        self._log(span)
+
     def press(self, button: str, *, via: str | None = None) -> dict[str, Any]:
         action = {"action": "system_button", "button": button.upper()}
         return self._act(action, semantic_hint=button, via=via)
@@ -232,12 +250,15 @@ class DeviceSession:
             if via:
                 out["via"] = via
             return out
+        t0 = time.perf_counter()
         self.adb.swipe(x1, y1, x2, y2, duration_ms=duration_ms)
-        row = {"event": "swipe", "from": [x1, y1], "to": [x2, y2]}
+        act_ms = int((time.perf_counter() - t0) * 1000)
+        row = {"event": "swipe", "from": [x1, y1], "to": [x2, y2], "act_ms": act_ms}
         if via:
             row["via"] = via
         self._log(row)
-        out: dict[str, Any] = {"ok": True}
+        self._log_l0_span_if_direct(action="swipe", act_ms=act_ms, via=via)
+        out: dict[str, Any] = {"ok": True, "act_ms": act_ms}
         if via:
             out["via"] = via
         return out
@@ -285,6 +306,7 @@ class DeviceSession:
             w, h = self.adb.screenshot(shot)
             self.last_size = (w, h)
         # Map pixel-less normalized actions: for type/key use as-is.
+        t0 = time.perf_counter()
         try:
             if action.get("action") == "type":
                 execute_action(self.adb, {"action": "type", "text": action.get("text", "")}, w, h)
@@ -300,22 +322,27 @@ class DeviceSession:
             else:
                 execute_action(self.adb, action, w, h)
         except ManoError as exc:
-            row = {"event": "act_error", "error": str(exc)[:500]}
+            act_ms = int((time.perf_counter() - t0) * 1000)
+            row = {"event": "act_error", "error": str(exc)[:500], "act_ms": act_ms}
             if via:
                 row["via"] = via
             self._log(row)
-            out = {"ok": False, "code": "ACT_ERROR", "reason": str(exc)[:500]}
+            out = {"ok": False, "code": "ACT_ERROR", "reason": str(exc)[:500], "act_ms": act_ms}
             if via:
                 out["via"] = via
             return out
+        act_ms = int((time.perf_counter() - t0) * 1000)
+        kind = str(action.get("action") or "act")
         row = {
             "event": "act",
             "action": {k: v for k, v in action.items() if not str(k).startswith("_")},
+            "act_ms": act_ms,
         }
         if via:
             row["via"] = via
         self._log(row)
-        out = {"ok": True}
+        self._log_l0_span_if_direct(action=kind, act_ms=act_ms, via=via)
+        out = {"ok": True, "act_ms": act_ms}
         if via:
             out["via"] = via
         return out
@@ -344,12 +371,15 @@ class DeviceSession:
             if via:
                 out["via"] = via
             return out
+        t0 = time.perf_counter()
         self.adb.tap(x, y)
-        row = {"event": "tap", "xy": [x, y], "hint": semantic_hint or None}
+        act_ms = int((time.perf_counter() - t0) * 1000)
+        row = {"event": "tap", "xy": [x, y], "hint": semantic_hint or None, "act_ms": act_ms}
         if via:
             row["via"] = via
         self._log(row)
-        out: dict[str, Any] = {"ok": True}
+        self._log_l0_span_if_direct(action="click", act_ms=act_ms, via=via)
+        out: dict[str, Any] = {"ok": True, "act_ms": act_ms}
         if via:
             out["via"] = via
         return out

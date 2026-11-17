@@ -81,6 +81,7 @@ uv run mau run-plan docs/examples/plans/ctrip-beijing-homestay.json
 | `mau run "goal" [--package ...] [--success-*]` | **Primary:** bounded loop + optional `success_check` |
 | `mau run-plan <plan.json>` | **Long tasks:** staged A/B/C plan |
 | `mau doctor` / `ready` | Device health + tips |
+| `mau trace [runs/<id>]` | Step timing/token table (`via` + `by_via`) from `trace.json` / journal (`--json` for raw) |
 | **L0 correction** | |
 | `mau observe` / `find` / `tap` / `type` / `press` / `launch` | Install dialogs, one-off fixes |
 | **Debug** | |
@@ -119,6 +120,10 @@ Templates: [`examples/mcp.cursor.json`](examples/mcp.cursor.json), [`examples/mc
 | Goal / orchestration | `android_run`, `android_run_plan`, `ready`, `doctor`, `launch_app`, `journal_tail` |
 | L0 correction | `observe`, `find`, `tap`, `swipe`, `type_text`, `press_button` |
 | Debug | `propose_action` (`execute=true` deprecated; needs `MAU_ALLOW_PROPOSE_EXECUTE=1`) |
+
+MCP `android_run` defaults to short calls (`max_steps=10`, ~90s soft wall budget). On `TIME_BUDGET`,
+resume with another short `android_run` (see `continue_hint`) — do not switch the main loop to L0.
+Long jobs: CLI `mau run` / `mau run-plan`, or multiple short MCP stages.
 
 Agent hosts should follow [`docs/agent-playbook.md`](docs/agent-playbook.md). Cursor rule: [`.cursor/rules/mau-android-agent.mdc`](.cursor/rules/mau-android-agent.mdc). Golden tasks: [`docs/eval-golden.md`](docs/eval-golden.md).
 

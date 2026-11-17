@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from mano_android_use.run_loop import TERMINAL_OK, RunResult
+from mano_android_use.run_loop import TERMINAL_OK, TERMINAL_TIME_BUDGET, RunResult
 from mano_android_use.run_plan import RunStage, android_run_plan, load_plan
 from mano_android_use.success_check import SuccessCheck
 
@@ -34,6 +34,18 @@ def test_plan_stops_on_stage_failure(monkeypatch):
                 reason="ok",
                 last_summary="summary-A",
                 package="app.demo",
+                cost_report={
+                    "total_ms": 1000,
+                    "prompt_tokens": 10,
+                    "completion_tokens": 1,
+                    "dominant_phase": "grounder",
+                    "by_phase": {
+                        "observe": {"ms": 100, "pct": 10},
+                        "grounder": {"ms": 800, "pct": 80},
+                        "act": {"ms": 100, "pct": 10},
+                    },
+                    "narrative": "stage A cost",
+                },
             )
         return RunResult(
             status="STUCK",
@@ -45,6 +57,18 @@ def test_plan_stops_on_stage_failure(monkeypatch):
             reason="stuck",
             last_summary="summary-B",
             package="app.demo",
+            cost_report={
+                "total_ms": 500,
+                "prompt_tokens": 5,
+                "completion_tokens": 1,
+                "dominant_phase": "observe",
+                "by_phase": {
+                    "observe": {"ms": 400, "pct": 80},
+                    "grounder": {"ms": 100, "pct": 20},
+                    "act": {"ms": 0, "pct": 0},
+                },
+                "narrative": "stage B cost",
+            },
         )
 
     monkeypatch.setattr("mano_android_use.run_plan.android_run", _fake_run)
@@ -58,6 +82,10 @@ def test_plan_stops_on_stage_failure(monkeypatch):
     assert res.failed_stage_id == "B"
     assert res.completed_stage_ids == ["A"]
     assert len(calls) == 2
+    assert res.cost_report is not None
+    assert res.cost_report["total_ms"] == 1500
+    assert res.cost_report["prompt_tokens"] == 15
+    assert len(res.cost_report["stages"]) == 2
 
 
 def test_plan_injects_continuity_context(monkeypatch):
@@ -112,3 +140,79 @@ def test_plan_state_prompt_rules():
     assert "Current stage id: C_price_list" in ctx
     assert "Do NOT redo" in ctx
     assert "北京" in ctx
+
+
+def test_plan_stops_on_time_budget_with_continue_hint(monkeypatch):
+    class _S:
+        run_id = "r"
+        run_dir = Path("/tmp/mau")
+
+    budgets: list[int] = []
+
+    def _fake_run(session, goal, **kwargs):
+        budgets.append(int(kwargs.get("wall_budget_ms") or 0))
+        if len(budgets) == 1:
+            return RunResult(
+                status=TERMINAL_OK,
+                goal=goal,
+                steps=1,
+                model="fake",
+                run_id="r",
+                run_dir="/tmp",
+                reason="ok",
+                last_summary="sum-A",
+                package="app.demo",
+                cost_report={
+                    "total_ms": 100,
+                    "prompt_tokens": 1,
+                    "completion_tokens": 0,
+                    "dominant_phase": "observe",
+                    "by_phase": {
+                        "observe": {"ms": 100, "pct": 100},
+                        "grounder": {"ms": 0, "pct": 0},
+                        "act": {"ms": 0, "pct": 0},
+                    },
+                    "narrative": "A",
+                },
+            )
+        return RunResult(
+            status=TERMINAL_TIME_BUDGET,
+            goal=goal,
+            steps=2,
+            model="fake",
+            run_id="r",
+            run_dir="/tmp",
+            reason="wall_budget_ms=90000",
+            last_summary="sum-B",
+            package="app.demo",
+            continue_hint={"action": "android_run", "goal": goal},
+            cost_report={
+                "total_ms": 200,
+                "prompt_tokens": 2,
+                "completion_tokens": 0,
+                "dominant_phase": "grounder",
+                "by_phase": {
+                    "observe": {"ms": 50, "pct": 25},
+                    "grounder": {"ms": 150, "pct": 75},
+                    "act": {"ms": 0, "pct": 0},
+                },
+                "narrative": "B budget",
+            },
+        )
+
+    monkeypatch.setattr("mano_android_use.run_plan.android_run", _fake_run)
+    stages = [
+        RunStage(id="A", goal="a"),
+        RunStage(id="B", goal="b"),
+        RunStage(id="C", goal="c"),
+    ]
+    res = android_run_plan(_S(), stages, plan_id="t", wall_budget_ms=90_000)
+    assert res.status == TERMINAL_TIME_BUDGET
+    assert res.failed_stage_id == "B"
+    assert res.completed_stage_ids == ["A"]
+    assert budgets == [90_000, 90_000]
+    assert res.cost_report is not None
+    assert res.cost_report["total_ms"] == 300
+    assert res.continue_hint is not None
+    assert res.continue_hint.get("resume_stage_id") == "B"
+    assert res.continue_hint.get("remaining_stage_ids") == ["B", "C"]

@@ -22,15 +22,20 @@ uv run mau ready                               # screen.awake, tips[]
 | 4 | `uv run mau run "打开设置" --package com.android.settings --max-steps 6` | reaches Settings with fewer exploratory steps when package is valid on device |
 | 5 | Payment / submit screen (manual): open a checkout-like page, then `mau run "完成支付" --max-steps 5` | `NEED_HUMAN` or `BLOCKED_BY_POLICY`; no pay tap in journal |
 | 6 | Staged plan smoke (optional, app installed): `uv run mau run-plan docs/examples/plans/ctrip-beijing-homestay.json` | stages progress or fail mid-stage with clear status — not silent Host tool thrash |
+| 7 | After any `mau run`: inspect `runs/<id>/journal.jsonl` + `trace.json` | at least one `event=android_run_step` with ms fields; `trace.json` `totals.step_ms` ≥ 0; `mau trace runs/<id>` prints a table with `via` |
+| 8 | MCP soft budget (unit / slow mock): `android_run(..., wall_budget_ms=…)` | `TIME_BUDGET` + `cost_report` + `continue_hint` (not an empty Host timeout) |
+| 9 | After MCP `propose_action` / direct `tap` | journal has `propose_step` / `l0_step`; `totals.by_via` populated; `android_run` internal tap does **not** add `l0_step` |
 
 ## Journal checks
 
 After a `mau run`, open `runs/<id>/journal.jsonl`:
 
 - Device acts should carry `"via": "android_run"` when coming from the loop.
-- L0 MCP/CLI taps should carry `"via": "l0_direct"`.
-- `propose_execute` should be rare / absent unless `MAU_ALLOW_PROPOSE_EXECUTE=1`.
+- L0 MCP/CLI taps should carry `"via": "l0_direct"` and an `l0_step` span.
+- `propose_action` logs `propose_step` (tokens + timing); `propose_execute` rare unless `MAU_ALLOW_PROPOSE_EXECUTE=1`.
+- Loop steps should include `android_run_step` spans (`observe_ms` / `grounder_ms` / `act_ms` / tokens).
+- `trace.json` / `cost_report` include `by_via` when bypass spans are present.
 
 ## Out of scope for this list
 
-Grounder latency microbenchmarks, Pack, WeChat, cloud devices, unlock, APK install productization.
+Pack, WeChat, cloud devices, unlock, APK install productization, LangSmith export.
