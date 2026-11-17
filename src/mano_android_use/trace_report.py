@@ -31,6 +31,7 @@ def build_step_span(
     event: str = EVENT_STEP,
     vlm_skipped: bool = False,
     skip_reason: str = "",
+    observe_breakdown: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Normalize one step span for history + journal."""
     observe_ms = max(0, int(observe_ms))
@@ -54,6 +55,17 @@ def build_step_span(
     }
     if skip_reason:
         out["skip_reason"] = str(skip_reason)
+    if isinstance(observe_breakdown, dict) and observe_breakdown:
+        out["observe_screenshot_ms"] = int(observe_breakdown.get("screenshot_ms") or 0)
+        out["observe_xml_ms"] = int(observe_breakdown.get("xml_ms") or 0)
+        modes = observe_breakdown.get("modes")
+        if isinstance(modes, list) and modes:
+            out["observe_modes"] = [str(m) for m in modes]
+        final_mode = observe_breakdown.get("final_mode") or (
+            modes[-1] if isinstance(modes, list) and modes else ""
+        )
+        if final_mode:
+            out["observe_mode"] = str(final_mode)
     return out
 
 
@@ -121,7 +133,10 @@ def aggregate_totals(steps: list[dict[str, Any]]) -> dict[str, Any]:
         "completion_tokens": 0,
         "grounder_calls": 0,
         "vlm_skipped": 0,
+        "observe_screenshot_ms": 0,
+        "observe_xml_ms": 0,
         "by_via": {},
+        "by_observe_mode": {},
     }
     for row in steps:
         for key in _MS_KEYS:
@@ -129,8 +144,19 @@ def aggregate_totals(steps: list[dict[str, Any]]) -> dict[str, Any]:
         for key in _TOKEN_KEYS:
             totals[key] += int(row.get(key) or 0)
         totals["grounder_calls"] += int(row.get("grounder_calls") or 0)
+        totals["observe_screenshot_ms"] += int(row.get("observe_screenshot_ms") or 0)
+        totals["observe_xml_ms"] += int(row.get("observe_xml_ms") or 0)
         if row.get("vlm_skipped"):
             totals["vlm_skipped"] += 1
+        modes = row.get("observe_modes")
+        if isinstance(modes, list):
+            for m in modes:
+                key = str(m or "")
+                if key:
+                    totals["by_observe_mode"][key] = int(totals["by_observe_mode"].get(key) or 0) + 1
+        elif row.get("observe_mode"):
+            key = str(row.get("observe_mode"))
+            totals["by_observe_mode"][key] = int(totals["by_observe_mode"].get(key) or 0) + 1
         bucket = _via_bucket(row)
         slot = totals["by_via"].setdefault(
             bucket,
@@ -317,11 +343,17 @@ def cost_report_from_doc(doc: dict[str, Any]) -> dict[str, Any]:
     if not by_via:
         by_via = aggregate_totals(steps).get("by_via") or {}
 
+    shot_ms = int(totals.get("observe_screenshot_ms") or 0)
+    xml_ms = int(totals.get("observe_xml_ms") or 0)
+    by_mode = totals.get("by_observe_mode") if isinstance(totals.get("by_observe_mode"), dict) else {}
     by_phase = {
         "observe": {
             "ms": obs,
             "pct": _pct(obs, total),
-            "what": "ADB screenshot + accessibility tree",
+            "what": "ADB capture (tree/shot/full; gated on-demand)",
+            "screenshot_ms": shot_ms,
+            "xml_ms": xml_ms,
+            "by_mode": dict(by_mode) if by_mode else {},
         },
         "grounder": {
             "ms": vlm,
@@ -375,6 +407,12 @@ def cost_report_from_doc(doc: dict[str, Any]) -> dict[str, Any]:
         narrative += f" VLM skipped on {vlm_skipped} step(s)."
     if bypass_ms > 0:
         narrative += f" Includes bypass via propose/L0/tree/recover: {_fmt_ms(bypass_ms)}."
+    if shot_ms or xml_ms or by_mode:
+        mode_bits = ",".join(f"{k}×{v}" for k, v in sorted(by_mode.items())) if by_mode else ""
+        narrative += (
+            f" Observe split: screenshot {_fmt_ms(shot_ms)}, xml {_fmt_ms(xml_ms)}"
+            + (f" (modes {mode_bits})." if mode_bits else ".")
+        )
     return {
         "total_ms": total,
         "steps": n,

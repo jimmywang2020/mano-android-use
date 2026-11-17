@@ -78,11 +78,12 @@ def ready() -> str:
 
 @mcp.tool()
 def observe(detail: str = "tree", max_nodes: int = 80) -> str:
-    """Observe the device UI.
+    """Observe the device UI (on-demand capture).
 
-    detail=tree (default): compact accessibility tree + short summary, NO screenshot
-    bytes for the host. Screenshots are still saved for the grounder/journal.
-    detail=screenshot|both: also mark screenshot path for host debugging only.
+    detail=tree (default): accessibility dump only (no PNG) + compact tree/summary.
+    detail=screenshot: PNG only (keeps last XML in session).
+    detail=both: full capture (screenshot + XML). Prefer android_run for multi-step goals;
+    it gates on tree and upgrades to shot/full only before VLM.
     """
     if detail not in {"tree", "screenshot", "both"}:
         detail = "tree"

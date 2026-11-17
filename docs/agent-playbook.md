@@ -45,13 +45,18 @@ until the Host times out empty.
 
 Inside `android_run` (default `stuck_same_summary=3`, override with `0` / env `MAU_STUCK_SAME_SUMMARY`):
 
-1. Observe screen signature (`package` + summary, plus tree fingerprint when summary is thin).
-2. If signature **unchanged** vs previous step: **do not call VLM** — first time `BACK` recover,
-   then short wait, then `STUCK` + `continue_hint`.
+1. **Tree observe first** (`capture_mode=tree`: accessibility dump, no PNG) → screen signature
+   (`package` + summary, plus tree fingerprint when summary is thin).
+2. If signature **unchanged** vs previous step: **do not call VLM** and **do not take a
+   screenshot** — first time `BACK` recover, then short wait, then `STUCK` + `continue_hint`.
 3. Before VLM: try **tree-first** — `tree_hints` and/or「quoted」labels in the goal; unique `find`
-   hit → tap with `via=tree_shortcut` (`grounder_ms=0`).
+   hit → tap with `via=tree_shortcut` (`grounder_ms=0`, still no PNG).
+4. Only when VLM is required: upgrade observe — `shot` if the tree is useful, or `full` when
+   the tree is empty/sparse (typical WebView). `cost_report` shows observe split
+   (`screenshot_ms` / `xml_ms` / modes).
 
 Host should pass stable labels when known (e.g. `tree_hints=设置` or goal `打开「设置」`).
+MCP `observe(detail=tree|screenshot|both)` maps to Core `tree|shot|full`.
 Acceptance checklist: [`docs/eval-vision-gating.md`](eval-vision-gating.md).
 
 ## Open an app
@@ -102,7 +107,7 @@ Update `~/.cursor/mcp.json` `env.MANO_DEVICE_SERIAL` the same way; bump `MCP_REV
 | Field | Meaning |
 |-------|---------|
 | `narrative` | One-line summary — quote this to the user |
-| `by_phase.observe` | ADB screenshot + accessibility tree |
+| `by_phase.observe` | ADB capture (tree/shot/full on demand); see `screenshot_ms` / `xml_ms` |
 | `by_phase.grounder` | VLM propose (**only** phase that uses tokens) |
 | `by_phase.act` | L0 tap / swipe / type / press |
 | `by_via` | Rollup by path: `android_run` / `propose` / `l0_direct` / `propose_execute` |

@@ -12,6 +12,7 @@ from mano_android_use.run_loop import (
     collect_tree_candidates,
     extract_quoted_labels,
     screen_signature,
+    tree_is_sparse,
 )
 from mano_android_use.trace_report import EVENT_STEP, load_step_spans, load_trace
 
@@ -32,6 +33,15 @@ class _FakeSession:
         self._presses: list[dict] = []
         self._summary = "package=app.demo; labels=[设置]"
         self._package = "app.demo"
+        self._observe_calls: list[dict] = []
+        self._tree_nodes = [
+            {"text": "设置", "desc": "", "bounds": [0, 0, 10, 10]},
+            {"text": "搜索", "desc": "", "bounds": [0, 0, 10, 10]},
+            {"text": "更多", "desc": "", "bounds": [0, 0, 10, 10]},
+        ]
+        self._shot = self.run_dir / "fake-shot.png"
+        if not self._shot.is_file():
+            self._shot.write_bytes(b"PNG")
 
     def ensure_awake(self, *, auto_wake: bool = True):
         return {"awake": self._awake, "wakefulness": "Awake" if self._awake else "Asleep", "ok": True, "woke": False}
@@ -53,14 +63,41 @@ class _FakeSession:
     def launch(self, package: str):
         return {"ok": True, "package": package}
 
-    def observe(self, detail: str = "tree", max_nodes: int = 80):
-        self._step += 1
+    def observe(
+        self,
+        detail: str = "tree",
+        max_nodes: int = 80,
+        bump_step: bool = True,
+        capture_mode: str | None = None,
+    ):
+        mode = capture_mode or (
+            "tree" if detail == "tree" else ("shot" if detail == "screenshot" else "full")
+        )
+        self._observe_calls.append(
+            {"detail": detail, "mode": mode, "bump_step": bump_step}
+        )
+        if bump_step:
+            self._step += 1
+        elif self._step <= 0:
+            self._step = 1
+        shot = str(self._shot) if mode in {"full", "shot"} else ""
+        nodes = list(self._tree_nodes) if mode in {"full", "tree"} else list(self._tree_nodes)
         return {
             "step": self._step,
             "summary": self._summary,
             "package": self._package,
             "safety": {"allow": True, "code": "OK", "reason": ""},
-            "screenshot_path": "/tmp/missing.png",
+            "screenshot_path": shot,
+            "capture_mode": mode,
+            "tree_compact": nodes,
+            "observe_breakdown": {
+                "capture_mode": mode,
+                "screenshot_ms": 5 if mode in {"full", "shot"} else 0,
+                "xml_ms": 7 if mode in {"full", "tree"} else 0,
+                "capture_attempt": 1,
+                "screenshot_skipped": mode == "tree",
+                "xml_skipped": mode == "shot",
+            },
         }
 
     def tap(self, x, y, semantic_hint: str = "", via: str | None = None):
@@ -260,11 +297,21 @@ def test_wall_budget_returns_time_budget(monkeypatch, tmp_path: Path):
     session = _FakeSession(run_dir=tmp_path)
     real_observe = session.observe
 
-    def _slow_observe(detail: str = "tree", max_nodes: int = 80):
+    def _slow_observe(
+        detail: str = "tree",
+        max_nodes: int = 80,
+        bump_step: bool = True,
+        capture_mode: str | None = None,
+    ):
         import time
 
         time.sleep(0.05)
-        return real_observe(detail=detail, max_nodes=max_nodes)
+        return real_observe(
+            detail=detail,
+            max_nodes=max_nodes,
+            bump_step=bump_step,
+            capture_mode=capture_mode,
+        )
 
     session.observe = _slow_observe  # type: ignore[method-assign]
 
@@ -381,18 +428,35 @@ def test_tree_shortcut_skips_grounder(monkeypatch, tmp_path: Path):
         "package=com.android.settings; labels=[设置, 搜索]",
     ]
 
-    def _obs(detail: str = "tree", max_nodes: int = 80):
-        session._step += 1
+    def _obs(
+        detail: str = "tree",
+        max_nodes: int = 80,
+        bump_step: bool = True,
+        capture_mode: str | None = None,
+    ):
+        mode = capture_mode or (
+            "tree" if detail == "tree" else ("shot" if detail == "screenshot" else "full")
+        )
+        if bump_step:
+            session._step += 1
         session._summary = summaries[min(session._step - 1, len(summaries) - 1)]
         session._package = (
             "com.android.settings" if session._step > 1 else "app.demo"
         )
+        shot = str(session._shot) if mode in {"full", "shot"} else ""
         return {
             "step": session._step,
             "summary": session._summary,
             "package": session._package,
             "safety": {"allow": True, "code": "OK", "reason": ""},
-            "screenshot_path": "/tmp/missing.png",
+            "screenshot_path": shot,
+            "capture_mode": mode,
+            "tree_compact": list(session._tree_nodes),
+            "observe_breakdown": {
+                "capture_mode": mode,
+                "screenshot_ms": 1 if mode in {"full", "shot"} else 0,
+                "xml_ms": 1 if mode in {"full", "tree"} else 0,
+            },
         }
 
     session.observe = _obs  # type: ignore[method-assign]
@@ -440,3 +504,137 @@ def test_tree_shortcut_multi_hit_falls_through_to_vlm(monkeypatch):
     )
     assert res.status == TERMINAL_OK
     assert session._taps == []
+
+
+def test_tree_is_sparse():
+    assert tree_is_sparse({"tree_compact": []})
+    assert tree_is_sparse({"tree_compact": [{"text": "", "desc": ""}]})
+    assert not tree_is_sparse(
+        {
+            "tree_compact": [
+                {"text": "a"},
+                {"text": "b"},
+                {"text": "c"},
+            ]
+        }
+    )
+
+
+def test_vlm_path_upgrades_tree_to_shot(monkeypatch, tmp_path: Path):
+    session = _FakeSession(run_dir=tmp_path)
+
+    class _G:
+        model = "fake"
+
+        def propose(self, image, instruction):
+            from mano_android_use.grounder import GrounderResult
+
+            assert Path(image).is_file()
+            return GrounderResult(
+                True,
+                "fake",
+                {"action": "terminate", "status": "success"},
+                "{}",
+            )
+
+    monkeypatch.setattr("mano_android_use.run_loop.Grounder", lambda model=None: _G())
+    res = android_run(session, "done", max_steps=3, stuck_same_summary=0)
+    assert res.status == TERMINAL_OK
+    modes = [c["mode"] for c in session._observe_calls]
+    assert modes[0] == "tree"
+    assert "shot" in modes
+    assert "full" not in modes
+    assert res.history[0].get("observe_upgrade") == "shot_for_vlm"
+    timing = res.history[0]["timing"]
+    assert timing.get("observe_mode") == "shot"
+    assert int(timing.get("observe_xml_ms") or 0) >= 0
+    assert int(timing.get("observe_screenshot_ms") or 0) >= 0
+
+
+def test_sparse_tree_upgrades_to_full(monkeypatch, tmp_path: Path):
+    session = _FakeSession(run_dir=tmp_path)
+    session._tree_nodes = []  # empty a11y → full upgrade
+
+    class _G:
+        model = "fake"
+
+        def propose(self, image, instruction):
+            from mano_android_use.grounder import GrounderResult
+
+            return GrounderResult(
+                True,
+                "fake",
+                {"action": "terminate", "status": "success"},
+                "{}",
+            )
+
+    monkeypatch.setattr("mano_android_use.run_loop.Grounder", lambda model=None: _G())
+    res = android_run(session, "webview", max_steps=3, stuck_same_summary=0)
+    assert res.status == TERMINAL_OK
+    modes = [c["mode"] for c in session._observe_calls]
+    assert modes[0] == "tree"
+    assert "full" in modes
+    assert res.history[0].get("observe_upgrade") == "full_sparse_tree"
+
+
+def test_tree_shortcut_never_full_observe(monkeypatch, tmp_path: Path):
+    session = _FakeSession(run_dir=tmp_path)
+    session._find_hits = [{"text": "设置", "center": [1, 2], "clickable": True}]
+
+    class _G:
+        model = "fake"
+
+        def propose(self, image, instruction):
+            from mano_android_use.grounder import GrounderResult
+
+            return GrounderResult(
+                True,
+                "fake",
+                {"action": "terminate", "status": "success"},
+                "{}",
+            )
+
+    monkeypatch.setattr("mano_android_use.run_loop.Grounder", lambda model=None: _G())
+    summaries = [
+        "package=app.demo; labels=[设置]",
+        "package=com.android.settings; labels=[设置]",
+    ]
+
+    def _obs(
+        detail: str = "tree",
+        max_nodes: int = 80,
+        bump_step: bool = True,
+        capture_mode: str | None = None,
+    ):
+        mode = capture_mode or (
+            "tree" if detail == "tree" else ("shot" if detail == "screenshot" else "full")
+        )
+        session._observe_calls.append({"detail": detail, "mode": mode, "bump_step": bump_step})
+        if bump_step:
+            session._step += 1
+        session._summary = summaries[min(session._step - 1, len(summaries) - 1)]
+        session._package = "com.android.settings" if session._step > 1 else "app.demo"
+        shot = str(session._shot) if mode in {"full", "shot"} else ""
+        return {
+            "step": session._step,
+            "summary": session._summary,
+            "package": session._package,
+            "safety": {"allow": True, "code": "OK", "reason": ""},
+            "screenshot_path": shot,
+            "capture_mode": mode,
+            "tree_compact": list(session._tree_nodes),
+            "observe_breakdown": {"capture_mode": mode, "screenshot_ms": 0, "xml_ms": 1},
+        }
+
+    session.observe = _obs  # type: ignore[method-assign]
+    res = android_run(
+        session,
+        '打开「设置」',
+        max_steps=5,
+        tree_hints=["设置"],
+        stuck_same_summary=0,
+    )
+    assert res.status == TERMINAL_OK
+    # First step tree_shortcut: tree only. Second step VLM: tree then shot (not full).
+    assert session._observe_calls[0]["mode"] == "tree"
+    assert all(c["mode"] != "full" for c in session._observe_calls)

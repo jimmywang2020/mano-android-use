@@ -64,13 +64,25 @@ def test_early_stop_on_success_check(monkeypatch):
         def ensure_awake(self, *, auto_wake=True):
             return {"awake": True, "wakefulness": "Awake", "ok": True, "woke": False}
 
-        def observe(self, detail="tree", max_nodes=80):
+        def observe(
+            self,
+            detail="tree",
+            max_nodes=80,
+            bump_step=True,
+            capture_mode=None,
+        ):
             return {
                 "step": 1,
                 "summary": "package=ctrip.android.view; labels=[北京, 民宿列表]",
                 "package": "ctrip.android.view",
                 "safety": {"allow": True, "code": "OK", "reason": ""},
-                "screenshot_path": "/tmp/missing.png",
+                "screenshot_path": "",
+                "capture_mode": "tree",
+                "tree_compact": [
+                    {"text": "北京"},
+                    {"text": "民宿列表"},
+                    {"text": "筛选"},
+                ],
             }
 
         def log_event(self, row):
@@ -101,26 +113,47 @@ def test_early_stop_on_success_check(monkeypatch):
     assert called["n"] == 0
 
 
-def test_terminate_vetoed_then_stuck(monkeypatch):
+def test_terminate_vetoed_then_stuck(monkeypatch, tmp_path: Path):
+    shot = tmp_path / "shot.png"
+    shot.write_bytes(b"PNG")
+
     class _S:
         run_id = "r"
-        run_dir = Path("/tmp/mau")
+        run_dir = tmp_path
         last_size = (100, 100)
         last_xml = "<hierarchy/>"
         last_package = "other.app"
         _step = 0
+        _shot = shot
 
         def ensure_awake(self, *, auto_wake=True):
             return {"awake": True, "wakefulness": "Awake", "ok": True, "woke": False}
 
-        def observe(self, detail="tree", max_nodes=80):
-            self._step += 1
+        def observe(
+            self,
+            detail="tree",
+            max_nodes=80,
+            bump_step=True,
+            capture_mode=None,
+        ):
+            mode = capture_mode or (
+                "tree" if detail == "tree" else ("shot" if detail == "screenshot" else "full")
+            )
+            if bump_step:
+                self._step += 1
             return {
-                "step": self._step,
+                "step": self._step or 1,
                 "summary": "package=other.app; labels=[首页]",
                 "package": "other.app",
                 "safety": {"allow": True, "code": "OK", "reason": ""},
-                "screenshot_path": "/tmp/missing.png",
+                "screenshot_path": str(self._shot) if mode in {"full", "shot"} else "",
+                "capture_mode": mode,
+                "tree_compact": [
+                    {"text": "首页"},
+                    {"text": "我的"},
+                    {"text": "更多"},
+                ],
+                "observe_breakdown": {"capture_mode": mode, "screenshot_ms": 0, "xml_ms": 1},
             }
 
         def log_event(self, row):

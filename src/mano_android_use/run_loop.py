@@ -27,9 +27,67 @@ from .trace_report import (
 from .tree import compact_nodes
 
 _DEFAULT_STUCK_SAME = 3
+_SPARSE_TREE_MIN_NODES = 3
 _QUOTED_LABEL_RE = re.compile(
     r"[「『\"“]([^」』\"”]{1,24})[」』\"”]"
 )
+
+
+def tree_is_sparse(obs: dict[str, Any], *, min_nodes: int = _SPARSE_TREE_MIN_NODES) -> bool:
+    """True when a11y tree is too thin to gate on (typical WebView / empty dump)."""
+    nodes = obs.get("tree_compact")
+    if not isinstance(nodes, list):
+        return True
+    if len(nodes) < min_nodes:
+        return True
+    labeled = 0
+    for n in nodes:
+        if not isinstance(n, dict):
+            continue
+        if str(n.get("text") or n.get("desc") or "").strip():
+            labeled += 1
+    return labeled < 1
+
+
+def _merge_observe_breakdown(
+    acc: dict[str, Any] | None,
+    obs: dict[str, Any],
+) -> dict[str, Any]:
+    """Accumulate Core observe breakdown across tree + upgrade captures."""
+    out = dict(acc or {})
+    bd = obs.get("observe_breakdown") if isinstance(obs.get("observe_breakdown"), dict) else {}
+    mode = str(obs.get("capture_mode") or bd.get("capture_mode") or "")
+    modes = list(out.get("modes") or [])
+    if mode:
+        modes.append(mode)
+    out["modes"] = modes
+    out["screenshot_ms"] = int(out.get("screenshot_ms") or 0) + int(bd.get("screenshot_ms") or 0)
+    out["xml_ms"] = int(out.get("xml_ms") or 0) + int(bd.get("xml_ms") or 0)
+    out["capture_attempt"] = int(out.get("capture_attempt") or 0) + int(
+        bd.get("capture_attempt") or 0
+    )
+    out["final_mode"] = mode or str(out.get("final_mode") or "")
+    return out
+
+
+def ensure_observation_for_grounder(
+    session: DeviceSession,
+    obs: dict[str, Any],
+) -> tuple[dict[str, Any], int, str]:
+    """Upgrade tree-only observe to shot/full before VLM. Returns (obs, ms, reason)."""
+    mode = str(obs.get("capture_mode") or "")
+    shot = str(obs.get("screenshot_path") or "")
+    if mode in {"full", "shot"} and shot and Path(shot).is_file():
+        return obs, 0, ""
+    t0 = time.perf_counter()
+    if tree_is_sparse(obs):
+        upgraded = session.observe(detail="both", bump_step=False)
+        reason = "full_sparse_tree"
+    else:
+        upgraded = session.observe(detail="screenshot", bump_step=False)
+        reason = "shot_for_vlm"
+    ms = max(0, int((time.perf_counter() - t0) * 1000))
+    return upgraded, ms, reason
 
 
 TERMINAL_OK = "GOAL_REACHED"
@@ -135,8 +193,10 @@ def _record_step_timing(
     via: str = VIA_ANDROID_RUN,
     vlm_skipped: bool = False,
     skip_reason: str = "",
+    observe_breakdown: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     # Phase ms from perf_counter; tokens/calls from GrounderResult when present.
+    bd = observe_breakdown if isinstance(observe_breakdown, dict) else entry.get("observe_breakdown")
     span = build_step_span(
         step=step,
         model=model,
@@ -150,6 +210,7 @@ def _record_step_timing(
         via=via,
         vlm_skipped=vlm_skipped,
         skip_reason=skip_reason,
+        observe_breakdown=bd if isinstance(bd, dict) else None,
     )
     entry["timing"] = span
     if vlm_skipped:
@@ -456,6 +517,7 @@ def android_run(
         t_obs0 = time.perf_counter()
         obs = session.observe(detail="tree")
         observe_ms = max(0, int((time.perf_counter() - t_obs0) * 1000))
+        observe_bd = _merge_observe_breakdown(None, obs)
         last_summary = str(obs.get("summary") or "")
         last_package = str(obs.get("package") or "")
         safety = obs.get("safety") or {}
@@ -470,6 +532,8 @@ def android_run(
             "package": last_package,
             "observe_safety": safety,
             "screen_sig": sig,
+            "observe_breakdown": observe_bd,
+            "capture_mode": obs.get("capture_mode") or "tree",
         }
 
         if stuck_same_summary > 0 and prev_screen_sig and sig == prev_screen_sig:
@@ -647,7 +711,34 @@ def android_run(
             tree_candidates = [c for c in tree_candidates if c != used]
             continue
 
-        image = Path(obs["screenshot_path"])
+        # Tree gate done; pay for PNG (shot) or full only when VLM is required.
+        obs, upgrade_ms, upgrade_reason = ensure_observation_for_grounder(session, obs)
+        if upgrade_reason:
+            observe_ms += upgrade_ms
+            observe_bd = _merge_observe_breakdown(observe_bd, obs)
+            entry["observe_breakdown"] = observe_bd
+            entry["observe_upgrade"] = upgrade_reason
+            entry["capture_mode"] = obs.get("capture_mode") or entry.get("capture_mode")
+            last_summary = str(obs.get("summary") or last_summary)
+            last_package = str(obs.get("package") or last_package)
+            entry["summary"] = last_summary
+            entry["package"] = last_package
+        image = Path(str(obs.get("screenshot_path") or ""))
+        if not image.is_file():
+            _record_step_timing(
+                session,
+                entry,
+                step=step,
+                model=grounder.model,
+                observe_ms=observe_ms,
+            )
+            entry["stop"] = TERMINAL_ERROR
+            history.append(entry)
+            return _result(
+                TERMINAL_ERROR,
+                steps=step,
+                reason="observe upgrade produced no screenshot for grounder",
+            )
         t_g0 = time.perf_counter()
         proposed = grounder.propose(
             image,

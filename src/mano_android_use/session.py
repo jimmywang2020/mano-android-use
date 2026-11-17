@@ -134,47 +134,108 @@ class DeviceSession:
     def _capture_frame(self, adb: Adb, path: Path) -> tuple[int, int]:
         return adb.screenshot(path)
 
-    def observe(self, *, detail: str = "tree", max_nodes: int = 80) -> dict[str, Any]:
-        """Observe device. detail: tree|screenshot|both (default tree = no host image)."""
-        self.step += 1
+    @staticmethod
+    def capture_mode_for_detail(detail: str) -> str:
+        """Map host-facing detail to Core capture_observation mode."""
+        d = (detail or "tree").strip().lower()
+        if d == "tree":
+            return "tree"
+        if d == "screenshot":
+            return "shot"
+        return "full"  # both / unknown → full
+
+    def observe(
+        self,
+        *,
+        detail: str = "tree",
+        max_nodes: int = 80,
+        bump_step: bool = True,
+        capture_mode: str | None = None,
+    ) -> dict[str, Any]:
+        """Observe device.
+
+        ``detail`` controls host payload *and* (unless ``capture_mode`` is set)
+        Core capture cost: ``tree`` → dump only, ``screenshot`` → PNG only,
+        ``both`` → full. Pass ``bump_step=False`` when upgrading the same logical
+        step (e.g. tree gate then shot/full before VLM).
+        """
+        mode = (capture_mode or self.capture_mode_for_detail(detail)).strip().lower()
+        if mode not in {"full", "tree", "shot"}:
+            mode = "full"
+        if bump_step:
+            self.step += 1
+        elif self.step <= 0:
+            self.step = 1
+        fallback = self.last_size if self.last_size[0] > 0 and self.last_size[1] > 0 else None
         obs = capture_observation(
             self.adb,
             self.run_dir,
             self.step,
             capture_frame=self._capture_frame,
+            mode=mode,  # type: ignore[arg-type]
+            fallback_size=fallback,
         )
-        self.last_xml = obs.xml
-        self.last_package = obs.foreground
-        self.last_size = (obs.width, obs.height)
-        nodes = compact_nodes(obs.xml, max_nodes=max_nodes)
-        summary = summarize(obs.foreground, nodes)
+        # Partial modes must not wipe the other modality's last_* cache.
+        if obs.xml:
+            self.last_xml = obs.xml
+        if obs.foreground:
+            self.last_package = obs.foreground
+        if obs.width > 0 and obs.height > 0:
+            self.last_size = (obs.width, obs.height)
+        xml_for_tree = obs.xml if obs.xml else self.last_xml
+        nodes = compact_nodes(xml_for_tree, max_nodes=max_nodes) if xml_for_tree else []
+        package = obs.foreground or self.last_package
+        summary = summarize(package, nodes)
         danger = self.safety.screen_looks_dangerous(
             " ".join(
                 str(n.get("text") or n.get("desc") or "") for n in nodes
             )
         )
+        shot_path = str(self.run_dir / obs.screenshot) if obs.screenshot else ""
+        xml_path = str(self.run_dir / obs.xml_path) if obs.xml_path else ""
+        breakdown = {
+            "capture_mode": obs.capture_mode,
+            "screenshot_ms": int(obs.screenshot_ms),
+            "xml_ms": int(obs.xml_ms),
+            "skew_ms": int(obs.skew_ms),
+            "capture_attempt": int(obs.capture_attempt),
+            "screenshot_skipped": bool(obs.screenshot_skipped),
+            "xml_skipped": bool(obs.xml_skipped),
+        }
         payload: dict[str, Any] = {
             "step": self.step,
             "observation_id": obs.observation_id,
-            "package": obs.foreground,
+            "package": package,
             "stability": obs.stability,
-            "size": [obs.width, obs.height],
+            "size": [self.last_size[0], self.last_size[1]],
             "summary": summary,
             "tree_compact": nodes,
             "safety": danger.to_dict(),
-            "screenshot_path": str(self.run_dir / obs.screenshot),
-            "xml_path": str(self.run_dir / obs.xml_path),
+            "screenshot_path": shot_path,
+            "xml_path": xml_path,
+            "capture_mode": obs.capture_mode,
+            "observe_breakdown": breakdown,
         }
-        if detail in {"screenshot", "both"}:
+        if detail in {"screenshot", "both"} or mode in {"shot", "full"}:
             # Host-facing: path only by default; raw base64 is expensive — expose path.
-            payload["screenshot_for_host"] = True
-            payload["note"] = (
-                "Screenshot saved on disk for debugging; prefer android_run "
-                "(or propose_action for one-shot debug) instead of feeding PNG to the host model."
-            )
+            payload["screenshot_for_host"] = bool(shot_path)
+            if shot_path:
+                payload["note"] = (
+                    "Screenshot saved on disk for debugging; prefer android_run "
+                    "(or propose_action for one-shot debug) instead of feeding PNG to the host model."
+                )
         else:
             payload["screenshot_for_host"] = False
-        self._log({"event": "observe", **{k: payload[k] for k in ("step", "package", "summary", "stability")}})
+        self._log(
+            {
+                "event": "observe",
+                "step": payload["step"],
+                "package": payload["package"],
+                "summary": payload["summary"],
+                "stability": payload["stability"],
+                **breakdown,
+            }
+        )
         return payload
 
     def find(self, query: str, *, limit: int = 10) -> dict[str, Any]:
