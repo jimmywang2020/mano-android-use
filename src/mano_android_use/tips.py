@@ -8,6 +8,7 @@ from typing import Any
 PLAYBOOK_LINES: tuple[str, ...] = (
     "Default path: ready → android_run or android_run_plan (Host picks goal; mau loops). Do not chain propose_action for multi-step goals.",
     "MCP: keep each android_run short (default max_steps=10, ~90s soft budget). On TIME_BUDGET, resume with another short android_run — do not switch the main loop to L0/propose.",
+    "Unchanged screen: mau skips VLM (recover BACK once, then STUCK). Pass tree_hints or「quoted」labels in the goal for tree-first taps before calling the grounder.",
     "Prefer package=/launch_app when the target app is installed; avoid browser+中文 type.",
     "Call ready before Chinese type_text; if text_backend.available is false, install OpenATX AdbKeyboard.",
     "APK install / ColorOS「继续安装」dialogs: use observe+tap or a human — not android_run.",

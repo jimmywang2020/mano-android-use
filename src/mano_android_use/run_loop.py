@@ -6,12 +6,14 @@ service observes, proposes, guards, and acts until a terminal status.
 
 from __future__ import annotations
 
+import os
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .apply_action import VIA_ANDROID_RUN, apply_action
+from .apply_action import VIA_ANDROID_RUN, VIA_TREE_SHORTCUT, apply_action
 from .grounder import Grounder, GrounderResult, pixel_from_normalized
 from .session import DeviceSession
 from .success_check import SuccessCheck, evaluate_success
@@ -21,6 +23,12 @@ from .trace_report import (
     cost_report_from_doc,
     trace_summary_from_doc,
     write_trace,
+)
+from .tree import compact_nodes
+
+_DEFAULT_STUCK_SAME = 3
+_QUOTED_LABEL_RE = re.compile(
+    r"[「『\"“]([^」』\"”]{1,24})[」』\"”]"
 )
 
 
@@ -124,6 +132,9 @@ def _record_step_timing(
     act_ms: int = 0,
     proposed: GrounderResult | None = None,
     action: dict[str, Any] | None = None,
+    via: str = VIA_ANDROID_RUN,
+    vlm_skipped: bool = False,
+    skip_reason: str = "",
 ) -> dict[str, Any]:
     # Phase ms from perf_counter; tokens/calls from GrounderResult when present.
     span = build_step_span(
@@ -136,9 +147,15 @@ def _record_step_timing(
         completion_tokens=int(proposed.completion_tokens) if proposed else 0,
         grounder_calls=int(proposed.call_count) if proposed else 0,
         action=_action_name(action, proposed),
-        via=VIA_ANDROID_RUN,
+        via=via,
+        vlm_skipped=vlm_skipped,
+        skip_reason=skip_reason,
     )
     entry["timing"] = span
+    if vlm_skipped:
+        entry["vlm_skipped"] = True
+        if skip_reason:
+            entry["skip_reason"] = skip_reason
     session.log_event(dict(span))
     return span
 
@@ -150,6 +167,99 @@ def _action_fingerprint(action: dict[str, Any] | None, mapped: dict[str, Any] | 
     if mapped and "pixel" in mapped:
         return f"{kind}:{mapped.get('pixel')}:{mapped.get('pixel2')}"
     return f"{kind}:{action.get('coordinate')}:{action.get('text')}:{action.get('button')}"
+
+
+def _normalize_summary(summary: str) -> str:
+    return re.sub(r"\s+", " ", (summary or "").strip())
+
+
+def screen_signature(
+    *,
+    package: str,
+    summary: str,
+    xml: str = "",
+) -> str:
+    """Stable-ish screen id for unchanged detection (no image hash required)."""
+    pkg = (package or "").strip()
+    summ = _normalize_summary(summary)
+    # Short / empty summaries (WebView) → fold in a coarse tree fingerprint.
+    if len(summ) < 24 or "labels=[]" in summ:
+        nodes = compact_nodes(xml or "", max_nodes=40)
+        labels = []
+        for n in nodes:
+            lab = n.get("text") or n.get("desc") or n.get("resource_id")
+            if lab:
+                labels.append(str(lab)[:32])
+            if len(labels) >= 12:
+                break
+        tree_fp = "|".join(labels)
+        return f"{pkg}::{summ}::{tree_fp}"
+    return f"{pkg}::{summ}"
+
+
+def resolve_stuck_same_summary(value: int | None = None) -> int:
+    """Default 3; ``0`` disables. Env ``MAU_STUCK_SAME_SUMMARY`` overrides when value is None."""
+    if value is not None:
+        return max(0, int(value))
+    raw = os.getenv("MAU_STUCK_SAME_SUMMARY", "").strip()
+    if raw:
+        try:
+            return max(0, int(raw))
+        except ValueError:
+            pass
+    return _DEFAULT_STUCK_SAME
+
+
+def extract_quoted_labels(goal: str, *, max_labels: int = 4) -> list[str]:
+    """Pull short quoted labels from goal for tree-first find."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for m in _QUOTED_LABEL_RE.finditer(goal or ""):
+        lab = (m.group(1) or "").strip()
+        if not lab or lab in seen:
+            continue
+        seen.add(lab)
+        out.append(lab)
+        if len(out) >= max_labels:
+            break
+    return out
+
+
+def collect_tree_candidates(
+    goal: str,
+    tree_hints: list[str] | None = None,
+) -> list[str]:
+    cands: list[str] = []
+    seen: set[str] = set()
+    for raw in list(tree_hints or []) + extract_quoted_labels(goal):
+        lab = str(raw or "").strip()
+        if not lab or lab in seen:
+            continue
+        seen.add(lab)
+        cands.append(lab)
+    return cands
+
+
+def try_tree_shortcut(
+    session: DeviceSession,
+    candidates: list[str],
+) -> dict[str, Any] | None:
+    """If exactly one find hit with a center, return tap target; else None."""
+    if not candidates:
+        return None
+    for query in candidates:
+        found = session.find(query, limit=5)
+        hits = list(found.get("hits") or [])
+        with_center = [h for h in hits if isinstance(h.get("center"), list) and len(h["center"]) >= 2]
+        if len(with_center) == 1:
+            c = with_center[0]["center"]
+            return {
+                "query": query,
+                "x": int(c[0]),
+                "y": int(c[1]),
+                "hit": with_center[0],
+            }
+    return None
 
 
 def _instruction(
@@ -193,10 +303,11 @@ def android_run(
     model: str | None = None,
     package: str | None = None,
     stuck_repeat: int = 3,
-    stuck_same_summary: int = 0,
+    stuck_same_summary: int | None = None,
     success_check: SuccessCheck | dict[str, Any] | None = None,
     goal_context: str = "",
     wall_budget_ms: int = 0,
+    tree_hints: list[str] | None = None,
 ) -> RunResult:
     """Run a bounded observe→propose→act loop toward ``goal``.
 
@@ -204,13 +315,18 @@ def android_run(
     verifier: early-stop when the screen matches; veto model ``terminate:success``
     when it does not.
 
-    ``stuck_same_summary``: if > 0, stop with STUCK when the observe summary is
-    unchanged for that many consecutive steps (default 0 = disabled).
+    ``stuck_same_summary``: if > 0, skip VLM on unchanged screen (recover then
+    STUCK). Default 3; ``0`` disables; ``None`` reads ``MAU_STUCK_SAME_SUMMARY``.
+
+    ``tree_hints``: optional labels for tree-first find before VLM (also uses
+    quoted labels inside ``goal``). Unique hit → tap with ``via=tree_shortcut``.
 
     ``wall_budget_ms``: if > 0, stop with TIME_BUDGET before the next observe once
     elapsed wall time reaches the budget (MCP soft timeout avoidance).
     """
     goal = (goal or "").strip()
+    stuck_same_summary = resolve_stuck_same_summary(stuck_same_summary)
+    tree_candidates = collect_tree_candidates(goal, tree_hints)
     if isinstance(success_check, dict):
         success_check = SuccessCheck.from_mapping(success_check)
     check_dict = success_check.to_dict() if isinstance(success_check, SuccessCheck) else None
@@ -265,10 +381,11 @@ def android_run(
     grounder = Grounder(model)
     history: list[dict[str, Any]] = []
     recent: list[str] = []
-    recent_summaries: list[str] = []
     last_summary = ""
     last_package = ""
     check_feedback = ""
+    prev_screen_sig = ""
+    unchanged_streak = 0
     t_run0 = time.perf_counter()
     wall_budget_ms = max(0, int(wall_budget_ms or 0))
 
@@ -342,25 +459,32 @@ def android_run(
         last_summary = str(obs.get("summary") or "")
         last_package = str(obs.get("package") or "")
         safety = obs.get("safety") or {}
+        sig = screen_signature(
+            package=last_package,
+            summary=last_summary,
+            xml=session.last_xml or "",
+        )
         entry: dict[str, Any] = {
             "step": step,
             "summary": last_summary,
             "package": last_package,
             "observe_safety": safety,
+            "screen_sig": sig,
         }
 
-        if stuck_same_summary > 0:
-            recent_summaries.append(last_summary)
-            if (
-                len(recent_summaries) >= stuck_same_summary
-                and len(set(recent_summaries[-stuck_same_summary:])) == 1
-            ):
+        if stuck_same_summary > 0 and prev_screen_sig and sig == prev_screen_sig:
+            unchanged_streak += 1
+            entry["unchanged_streak"] = unchanged_streak
+            if unchanged_streak >= stuck_same_summary:
                 _record_step_timing(
                     session,
                     entry,
                     step=step,
                     model=grounder.model,
                     observe_ms=observe_ms,
+                    vlm_skipped=True,
+                    skip_reason="unchanged_stuck",
+                    via=VIA_ANDROID_RUN,
                 )
                 entry["stop"] = TERMINAL_STUCK
                 history.append(entry)
@@ -370,14 +494,57 @@ def android_run(
                         "status": TERMINAL_STUCK,
                         "step": step,
                         "via": VIA_ANDROID_RUN,
-                        "reason": "unchanged_summary",
+                        "reason": "unchanged_screen",
+                        "unchanged_streak": unchanged_streak,
                     }
                 )
                 return _result(
                     TERMINAL_STUCK,
                     steps=step,
-                    reason=f"unchanged summary x{stuck_same_summary}",
+                    reason=f"unchanged screen x{unchanged_streak}",
+                    with_continue_hint=True,
                 )
+            # Graded recover: first unchanged → BACK; later → short wait. No VLM.
+            t_act0 = time.perf_counter()
+            if unchanged_streak == 1:
+                exec_result = session.press("BACK", via=VIA_ANDROID_RUN)
+                recover_action = "system_button"
+                skip_reason = "unchanged_recover"
+            else:
+                time.sleep(0.4)
+                exec_result = {"ok": True, "waited": True, "via": VIA_ANDROID_RUN}
+                recover_action = "wait"
+                skip_reason = "unchanged_wait"
+            act_ms = max(0, int((time.perf_counter() - t_act0) * 1000))
+            entry["execution"] = exec_result
+            entry["unchanged_recover"] = skip_reason
+            session.log_event(
+                {
+                    "event": "unchanged_recover",
+                    "step": step,
+                    "streak": unchanged_streak,
+                    "action": recover_action,
+                    "skip_reason": skip_reason,
+                }
+            )
+            _record_step_timing(
+                session,
+                entry,
+                step=step,
+                model=grounder.model,
+                observe_ms=observe_ms,
+                act_ms=act_ms,
+                action={"action": recover_action},
+                via="unchanged_recover",
+                vlm_skipped=True,
+                skip_reason=skip_reason,
+            )
+            history.append(entry)
+            # Keep prev_screen_sig so next observe can extend the streak.
+            continue
+        else:
+            unchanged_streak = 0
+            prev_screen_sig = sig
 
         if safety.get("code") == "NEED_HUMAN" or safety.get("allow") is False:
             _record_step_timing(
@@ -412,6 +579,8 @@ def android_run(
                     step=step,
                     model=grounder.model,
                     observe_ms=observe_ms,
+                    vlm_skipped=True,
+                    skip_reason="success_check",
                 )
                 entry["stop"] = TERMINAL_OK
                 history.append(entry)
@@ -424,6 +593,59 @@ def android_run(
                     reason="success_check satisfied",
                     verdict=verdict.to_dict(),
                 )
+
+        # Tree-first: unique find hit → tap without VLM.
+        tree_hit = try_tree_shortcut(session, tree_candidates)
+        if tree_hit:
+            t_act0 = time.perf_counter()
+            exec_result = session.tap(
+                int(tree_hit["x"]),
+                int(tree_hit["y"]),
+                semantic_hint=str(tree_hit.get("query") or goal)[:120],
+                via=VIA_TREE_SHORTCUT,
+            )
+            act_ms = max(0, int((time.perf_counter() - t_act0) * 1000))
+            entry["tree_shortcut"] = {
+                "query": tree_hit.get("query"),
+                "xy": [tree_hit["x"], tree_hit["y"]],
+            }
+            entry["execution"] = exec_result
+            _record_step_timing(
+                session,
+                entry,
+                step=step,
+                model=grounder.model,
+                observe_ms=observe_ms,
+                act_ms=act_ms,
+                action={"action": "click"},
+                via=VIA_TREE_SHORTCUT,
+                vlm_skipped=True,
+                skip_reason="tree_shortcut",
+            )
+            history.append(entry)
+            if not exec_result.get("ok"):
+                code = str(exec_result.get("code") or "")
+                if code == "BLOCKED_BY_POLICY":
+                    return _result(
+                        TERMINAL_BLOCKED,
+                        steps=step,
+                        reason=str(exec_result.get("reason") or code),
+                    )
+                if code == "NEED_HUMAN":
+                    return _result(
+                        TERMINAL_HUMAN,
+                        steps=step,
+                        reason=str(exec_result.get("reason") or code),
+                    )
+                return _result(
+                    TERMINAL_ERROR,
+                    steps=step,
+                    reason=str(exec_result.get("reason") or exec_result),
+                )
+            # Drop the used hint so we do not re-tap the same label forever.
+            used = str(tree_hit.get("query") or "")
+            tree_candidates = [c for c in tree_candidates if c != used]
+            continue
 
         image = Path(obs["screenshot_path"])
         t_g0 = time.perf_counter()

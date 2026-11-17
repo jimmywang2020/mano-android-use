@@ -68,6 +68,7 @@ class RunStage:
     max_steps: int = 12
     package: str | None = None  # cold-start only when set (usually stage A)
     success_check: SuccessCheck | None = None
+    tree_hints: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -79,6 +80,8 @@ class RunStage:
             out["package"] = self.package
         if self.success_check and not self.success_check.is_empty():
             out["success_check"] = self.success_check.to_dict()
+        if self.tree_hints:
+            out["tree_hints"] = list(self.tree_hints)
         return out
 
     @classmethod
@@ -99,12 +102,18 @@ class RunStage:
                     "use_xml": raw.get("use_xml"),
                 }
             )
+        hints_raw = raw.get("tree_hints") or raw.get("tree_hint") or []
+        if isinstance(hints_raw, str):
+            hints = [p.strip() for p in hints_raw.split(",") if p.strip()]
+        else:
+            hints = [str(p).strip() for p in hints_raw if str(p).strip()]
         return cls(
             id=sid,
             goal=goal,
             max_steps=int(raw.get("max_steps") or 12),
             package=(str(raw["package"]).strip() if raw.get("package") else None),
             success_check=check,
+            tree_hints=hints,
         )
 
 
@@ -190,6 +199,7 @@ def android_run_plan(
             success_check=stage.success_check,
             goal_context=ctx,
             wall_budget_ms=wall_budget_ms,
+            tree_hints=list(stage.tree_hints or []),
         )
         row = {
             "id": stage.id,

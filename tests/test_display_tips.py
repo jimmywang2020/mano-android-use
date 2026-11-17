@@ -18,3 +18,4 @@ def test_build_tips_ime_and_screen():
     assert any("asleep" in t.lower() or "off" in t.lower() for t in tips)
     assert PLAYBOOK_LINES[0] in tips
     assert any("TIME_BUDGET" in t or "90s" in t for t in tips)
+    assert any("tree" in t.lower() or "unchanged" in t.lower() or "VLM" in t for t in tips)

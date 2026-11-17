@@ -78,7 +78,7 @@ uv run mau run-plan docs/examples/plans/ctrip-beijing-homestay.json
 | 命令 | 用途 |
 |------|------|
 | **选题 / 编排** | |
-| `mau run "goal" [--package ...] [--success-*]` | **主路径**：有界循环 + 可选 `success_check` |
+| `mau run "goal" [--package ...] [--success-*] [--tree-hint ...] [--stuck-same-summary N]` | **主路径**：有界循环；tree-first + 同屏跳过 VLM |
 | `mau run-plan <plan.json>` | **长任务**：分阶段 A/B/C plan |
 | `mau doctor` / `ready` | 设备健康检查 + tips |
 | `mau trace [runs/<id>]` | 逐步耗时/token 表（读 `trace.json` / journal；`--json` 打原始 JSON） |

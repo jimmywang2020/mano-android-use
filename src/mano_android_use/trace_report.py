@@ -29,13 +29,15 @@ def build_step_span(
     action: str = "",
     via: str = "android_run",
     event: str = EVENT_STEP,
+    vlm_skipped: bool = False,
+    skip_reason: str = "",
 ) -> dict[str, Any]:
     """Normalize one step span for history + journal."""
     observe_ms = max(0, int(observe_ms))
     grounder_ms = max(0, int(grounder_ms))
     act_ms = max(0, int(act_ms))
     ev = event if event in SPAN_EVENTS else EVENT_STEP
-    return {
+    out = {
         "event": ev,
         "step": int(step),
         "model": model or "",
@@ -48,7 +50,11 @@ def build_step_span(
         "grounder_calls": max(0, int(grounder_calls)),
         "action": action or "",
         "via": via or "android_run",
+        "vlm_skipped": bool(vlm_skipped),
     }
+    if skip_reason:
+        out["skip_reason"] = str(skip_reason)
+    return out
 
 
 def load_step_spans(run_dir: Path | str) -> list[dict[str, Any]]:
@@ -88,7 +94,14 @@ def spans_from_history(history: list[dict[str, Any]] | None) -> list[dict[str, A
 def _via_bucket(row: dict[str, Any]) -> str:
     via = str(row.get("via") or "")
     ev = str(row.get("event") or "")
-    if via in {"android_run", "propose", "l0_direct", "propose_execute"}:
+    if via in {
+        "android_run",
+        "propose",
+        "l0_direct",
+        "propose_execute",
+        "tree_shortcut",
+        "unchanged_recover",
+    }:
         return via
     if ev == EVENT_PROPOSE_STEP:
         return "propose"
@@ -107,6 +120,7 @@ def aggregate_totals(steps: list[dict[str, Any]]) -> dict[str, Any]:
         "prompt_tokens": 0,
         "completion_tokens": 0,
         "grounder_calls": 0,
+        "vlm_skipped": 0,
         "by_via": {},
     }
     for row in steps:
@@ -115,6 +129,8 @@ def aggregate_totals(steps: list[dict[str, Any]]) -> dict[str, Any]:
         for key in _TOKEN_KEYS:
             totals[key] += int(row.get(key) or 0)
         totals["grounder_calls"] += int(row.get("grounder_calls") or 0)
+        if row.get("vlm_skipped"):
+            totals["vlm_skipped"] += 1
         bucket = _via_bucket(row)
         slot = totals["by_via"].setdefault(
             bucket,
@@ -320,11 +336,16 @@ def cost_report_from_doc(doc: dict[str, Any]) -> dict[str, Any]:
             "what": "tap / swipe / type / press via L0",
         },
     }
+    vlm_skipped = int(totals.get("vlm_skipped") or 0)
+    if not vlm_skipped:
+        vlm_skipped = sum(1 for row in steps if row.get("vlm_skipped"))
     step_rows = [
         {
             "step": int(row.get("step") or 0),
             "action": str(row.get("action") or ""),
             "via": str(row.get("via") or ""),
+            "vlm_skipped": bool(row.get("vlm_skipped")),
+            "skip_reason": str(row.get("skip_reason") or ""),
             "observe_ms": int(row.get("observe_ms") or 0),
             "grounder_ms": int(row.get("grounder_ms") or 0),
             "act_ms": int(row.get("act_ms") or 0),
@@ -340,7 +361,7 @@ def cost_report_from_doc(doc: dict[str, Any]) -> dict[str, Any]:
     )[0]
     bypass_ms = sum(
         int((by_via.get(k) or {}).get("step_ms") or 0)
-        for k in ("propose", "l0_direct", "propose_execute")
+        for k in ("propose", "l0_direct", "propose_execute", "tree_shortcut", "unchanged_recover")
     )
     narrative = (
         f"Total {_fmt_ms(total)} across {n} step(s). "
@@ -350,13 +371,17 @@ def cost_report_from_doc(doc: dict[str, Any]) -> dict[str, Any]:
         f"Tokens: {ptok} prompt + {ctok} completion (grounder only). "
         f"Dominant: {dominant}."
     )
+    if vlm_skipped:
+        narrative += f" VLM skipped on {vlm_skipped} step(s)."
     if bypass_ms > 0:
-        narrative += f" Includes bypass via propose/L0: {_fmt_ms(bypass_ms)}."
+        narrative += f" Includes bypass via propose/L0/tree/recover: {_fmt_ms(bypass_ms)}."
     return {
         "total_ms": total,
         "steps": n,
         "prompt_tokens": ptok,
         "completion_tokens": ctok,
+        "grounder_calls": int(totals.get("grounder_calls") or 0),
+        "vlm_skipped": vlm_skipped,
         "by_phase": by_phase,
         "by_via": by_via,
         "dominant_phase": dominant,

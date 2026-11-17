@@ -142,6 +142,7 @@ def test_terminate_vetoed_then_stuck(monkeypatch):
         _S(),
         "open ctrip",
         max_steps=3,
+        stuck_same_summary=0,
         success_check=SuccessCheck(package="ctrip.android.view", labels_any=["北京"]),
     )
     # vetoed each step → eventually BUDGET

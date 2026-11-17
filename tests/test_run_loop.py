@@ -9,6 +9,9 @@ from mano_android_use.run_loop import (
     TERMINAL_TIME_BUDGET,
     _action_fingerprint,
     android_run,
+    collect_tree_candidates,
+    extract_quoted_labels,
+    screen_signature,
 )
 from mano_android_use.trace_report import EVENT_STEP, load_step_spans, load_trace
 
@@ -24,9 +27,28 @@ class _FakeSession:
         self._events = []
         self._step = 0
         self._awake = awake
+        self._find_hits: list[dict] = []
+        self._taps: list[dict] = []
+        self._presses: list[dict] = []
+        self._summary = "package=app.demo; labels=[设置]"
+        self._package = "app.demo"
 
     def ensure_awake(self, *, auto_wake: bool = True):
         return {"awake": self._awake, "wakefulness": "Awake" if self._awake else "Asleep", "ok": True, "woke": False}
+
+    def find(self, query, limit: int = 10):
+        hits = []
+        for h in self._find_hits:
+            blob = " ".join(
+                str(x)
+                for x in (h.get("text"), h.get("desc"), h.get("resource_id"))
+                if x
+            )
+            if query in blob:
+                hits.append(h)
+            if len(hits) >= limit:
+                break
+        return {"query": query, "count": len(hits), "hits": hits}
 
     def launch(self, package: str):
         return {"ok": True, "package": package}
@@ -35,13 +57,14 @@ class _FakeSession:
         self._step += 1
         return {
             "step": self._step,
-            "summary": "package=app.demo; labels=[设置]",
-            "package": "app.demo",
+            "summary": self._summary,
+            "package": self._package,
             "safety": {"allow": True, "code": "OK", "reason": ""},
             "screenshot_path": "/tmp/missing.png",
         }
 
     def tap(self, x, y, semantic_hint: str = "", via: str | None = None):
+        self._taps.append({"x": x, "y": y, "via": via, "hint": semantic_hint})
         out = {"ok": True}
         if via:
             out["via"] = via
@@ -60,6 +83,7 @@ class _FakeSession:
         return out
 
     def press(self, button, via: str | None = None):
+        self._presses.append({"button": button, "via": via})
         out = {"ok": True}
         if via:
             out["via"] = via
@@ -113,33 +137,36 @@ def test_stuck_on_repeated_clicks(monkeypatch):
         "mano_android_use.run_loop.pixel_from_normalized",
         lambda action, w, h: {"action": "click", "pixel": [100, 100]},
     )
-    res = android_run(session, "open settings", max_steps=10, stuck_repeat=3)
+    res = android_run(
+        session,
+        "open settings",
+        max_steps=10,
+        stuck_repeat=3,
+        stuck_same_summary=0,
+    )
     assert res.status == TERMINAL_STUCK
     assert res.steps == 3
 
 
-def test_stuck_on_unchanged_summary(monkeypatch):
+def test_stuck_on_unchanged_screen_skips_vlm(monkeypatch):
     session = _FakeSession()
+    proposes = {"n": 0}
 
     class _G:
         model = "fake"
-        _n = 0
 
         def propose(self, image, instruction):
             from mano_android_use.grounder import GrounderResult
 
-            self._n += 1
-            # Different coordinates so action-fingerprint stuck does not fire first.
+            proposes["n"] += 1
             return GrounderResult(
                 True,
                 "fake",
-                {"action": "click", "coordinate": [self._n, self._n]},
+                {"action": "click", "coordinate": [proposes["n"], proposes["n"]]},
                 "{}",
             )
 
-    g = _G()
-
-    monkeypatch.setattr("mano_android_use.run_loop.Grounder", lambda model=None: g)
+    monkeypatch.setattr("mano_android_use.run_loop.Grounder", lambda model=None: _G())
     monkeypatch.setattr(
         "mano_android_use.run_loop.pixel_from_normalized",
         lambda action, w, h: {
@@ -147,12 +174,18 @@ def test_stuck_on_unchanged_summary(monkeypatch):
             "pixel": list(action.get("coordinate") or [1, 1]),
         },
     )
+    # First observe → VLM; then recover/wait; STUCK on 3rd unchanged (step 4).
     res = android_run(
         session, "noop", max_steps=10, stuck_repeat=99, stuck_same_summary=3
     )
     assert res.status == TERMINAL_STUCK
-    assert res.steps == 3
-    assert "unchanged summary" in res.reason
+    assert res.steps == 4
+    assert "unchanged screen" in res.reason
+    assert proposes["n"] == 1
+    assert any(e.get("vlm_skipped") for e in session._events)
+    assert res.cost_report and res.cost_report.get("vlm_skipped", 0) >= 1
+    assert session._presses and session._presses[0]["button"] == "BACK"
+    assert res.continue_hint is not None
 
 
 def test_terminate_success(monkeypatch):
@@ -303,6 +336,107 @@ def test_system_button_press_alias(monkeypatch):
             )
 
     monkeypatch.setattr("mano_android_use.run_loop.Grounder", lambda model=None: _G())
-    res = android_run(session, "go home then done", max_steps=5)
+    res = android_run(
+        session, "go home then done", max_steps=5, stuck_same_summary=0
+    )
     assert pressed == ["home"]
     assert res.status == TERMINAL_OK
+
+
+def test_quoted_labels_and_screen_signature():
+    assert extract_quoted_labels('打开「设置」然后点"蓝牙"') == ["设置", "蓝牙"]
+    assert collect_tree_candidates('打开「设置」', ["蓝牙"]) == ["蓝牙", "设置"]
+    sig_a = screen_signature(package="a", summary="package=a; labels=[x]")
+    sig_b = screen_signature(package="a", summary="package=a; labels=[x]")
+    assert sig_a == sig_b
+    assert screen_signature(package="a", summary="package=a; labels=[y]") != sig_a
+
+
+def test_tree_shortcut_skips_grounder(monkeypatch, tmp_path: Path):
+    session = _FakeSession(run_dir=tmp_path)
+    session._find_hits = [
+        {"text": "设置", "center": [120, 340], "clickable": True},
+    ]
+    proposes = {"n": 0}
+
+    class _G:
+        model = "fake"
+
+        def propose(self, image, instruction):
+            from mano_android_use.grounder import GrounderResult
+
+            proposes["n"] += 1
+            return GrounderResult(
+                True,
+                "fake",
+                {"action": "terminate", "status": "success"},
+                "{}",
+            )
+
+    monkeypatch.setattr("mano_android_use.run_loop.Grounder", lambda model=None: _G())
+
+    # After tree tap, change summary so unchanged path does not fire; then terminate.
+    summaries = [
+        "package=app.demo; labels=[设置]",
+        "package=com.android.settings; labels=[设置, 搜索]",
+    ]
+
+    def _obs(detail: str = "tree", max_nodes: int = 80):
+        session._step += 1
+        session._summary = summaries[min(session._step - 1, len(summaries) - 1)]
+        session._package = (
+            "com.android.settings" if session._step > 1 else "app.demo"
+        )
+        return {
+            "step": session._step,
+            "summary": session._summary,
+            "package": session._package,
+            "safety": {"allow": True, "code": "OK", "reason": ""},
+            "screenshot_path": "/tmp/missing.png",
+        }
+
+    session.observe = _obs  # type: ignore[method-assign]
+
+    res = android_run(
+        session,
+        '打开「设置」',
+        max_steps=5,
+        tree_hints=["设置"],
+        stuck_same_summary=0,
+    )
+    assert res.status == TERMINAL_OK
+    assert proposes["n"] == 1  # only terminate step uses VLM
+    assert session._taps and session._taps[0]["via"] == "tree_shortcut"
+    assert session._taps[0]["x"] == 120
+    assert any(
+        e.get("via") == "tree_shortcut" and e.get("vlm_skipped") for e in session._events
+    )
+    assert res.cost_report and "tree_shortcut" in (res.cost_report.get("by_via") or {})
+
+
+def test_tree_shortcut_multi_hit_falls_through_to_vlm(monkeypatch):
+    session = _FakeSession()
+    session._find_hits = [
+        {"text": "设置", "center": [10, 10]},
+        {"text": "设置", "center": [20, 20]},
+    ]
+
+    class _G:
+        model = "fake"
+
+        def propose(self, image, instruction):
+            from mano_android_use.grounder import GrounderResult
+
+            return GrounderResult(
+                True,
+                "fake",
+                {"action": "terminate", "status": "success"},
+                "{}",
+            )
+
+    monkeypatch.setattr("mano_android_use.run_loop.Grounder", lambda model=None: _G())
+    res = android_run(
+        session, "打开设置", max_steps=3, tree_hints=["设置"], stuck_same_summary=0
+    )
+    assert res.status == TERMINAL_OK
+    assert session._taps == []

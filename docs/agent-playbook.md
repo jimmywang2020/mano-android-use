@@ -41,6 +41,19 @@ until the Host times out empty.
 - Very long jobs: prefer CLI `mau run` / `mau run-plan` (no MCP soft budget by default), or
   multiple short MCP stages via `android_run_plan`.
 
+### Unchanged screen + tree-first (skip VLM when possible)
+
+Inside `android_run` (default `stuck_same_summary=3`, override with `0` / env `MAU_STUCK_SAME_SUMMARY`):
+
+1. Observe screen signature (`package` + summary, plus tree fingerprint when summary is thin).
+2. If signature **unchanged** vs previous step: **do not call VLM** — first time `BACK` recover,
+   then short wait, then `STUCK` + `continue_hint`.
+3. Before VLM: try **tree-first** — `tree_hints` and/or「quoted」labels in the goal; unique `find`
+   hit → tap with `via=tree_shortcut` (`grounder_ms=0`).
+
+Host should pass stable labels when known (e.g. `tree_hints=设置` or goal `打开「设置」`).
+Acceptance checklist: [`docs/eval-vision-gating.md`](eval-vision-gating.md).
+
 ## Open an app
 
 | Situation | Do this |

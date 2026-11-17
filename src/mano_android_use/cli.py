@@ -74,6 +74,19 @@ def main(argv: list[str] | None = None) -> int:
         dest="success_labels_all",
         help="success_check: labels_all substring (repeatable)",
     )
+    p_run.add_argument(
+        "--tree-hint",
+        action="append",
+        default=[],
+        dest="tree_hints",
+        help="Tree-first find label before VLM (repeatable); also uses「quoted」in goal",
+    )
+    p_run.add_argument(
+        "--stuck-same-summary",
+        type=int,
+        default=-1,
+        help="Unchanged-screen threshold (default 3; 0=off). Skip VLM / recover / STUCK",
+    )
     p_plan = sub.add_parser(
         "run-plan",
         help="Run a staged plan JSON (generic A/B/C + per-stage success_check)",
@@ -245,6 +258,7 @@ def main(argv: list[str] | None = None) -> int:
             labels_any=list(args.success_labels or []),
             labels_all=list(args.success_labels_all or []),
         )
+        stuck_arg = None if int(args.stuck_same_summary) < 0 else int(args.stuck_same_summary)
         result = android_run(
             session,
             args.goal,
@@ -252,6 +266,8 @@ def main(argv: list[str] | None = None) -> int:
             model=args.model or None,
             package=args.package or None,
             success_check=None if check.is_empty() else check,
+            tree_hints=list(args.tree_hints or []),
+            stuck_same_summary=stuck_arg,
         )
         _print(result.to_dict())
         return 0 if result.status == TERMINAL_OK else 1

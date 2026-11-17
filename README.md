@@ -78,7 +78,7 @@ uv run mau run-plan docs/examples/plans/ctrip-beijing-homestay.json
 | Command | Purpose |
 |---------|---------|
 | **Goal / orchestration** | |
-| `mau run "goal" [--package ...] [--success-*]` | **Primary:** bounded loop + optional `success_check` |
+| `mau run "goal" [--package ...] [--success-*] [--tree-hint ...] [--stuck-same-summary N]` | **Primary:** bounded loop; tree-first + unchanged-screen VLM skip |
 | `mau run-plan <plan.json>` | **Long tasks:** staged A/B/C plan |
 | `mau doctor` / `ready` | Device health + tips |
 | `mau trace [runs/<id>]` | Step timing/token table (`via` + `by_via`) from `trace.json` / journal (`--json` for raw) |

@@ -245,14 +245,18 @@ def android_run(
     success_package: str = "",
     success_labels_any: str = "",
     success_labels_all: str = "",
+    tree_hints: str = "",
+    stuck_same_summary: int = -1,
 ) -> str:
     """PRIMARY: bounded observe→propose→act loop toward a natural-language goal.
 
     Host picks the goal; mau orchestrates the loop; Grounder sees screenshots; L0 acts.
     MCP defaults: max_steps=10, wall soft-budget ~90s → may return TIME_BUDGET +
     cost_report + continue_hint (re-call short android_run; do not switch to L0 loop).
+    Unchanged screen (default): skip VLM, recover once (BACK) then STUCK.
+    tree_hints: comma-separated labels for tree-first tap before VLM (also uses「quoted」in goal).
     Long jobs: multiple short MCP calls or CLI `mau run` / `mau run-plan`.
-    Response includes cost_report: total_ms, tokens, by_phase (observe/grounder/act),
+    Response includes cost_report: total_ms, tokens, by_phase, vlm_skipped, by_via,
     per_step, and narrative — always relay cost_report.narrative (+ dominant_phase) to the user.
     Playbook:
     - Known app → set package= (e.g. ctrip.android.view); avoid browser+中文 search.
@@ -275,6 +279,7 @@ def android_run(
         labels_any=_split(success_labels_any),
         labels_all=_split(success_labels_all),
     )
+    stuck_arg = None if int(stuck_same_summary) < 0 else int(stuck_same_summary)
     result = _android_run(
         _session(),
         goal,
@@ -283,6 +288,8 @@ def android_run(
         package=package or None,
         success_check=None if check.is_empty() else check,
         wall_budget_ms=_MCP_WALL_BUDGET_MS,
+        tree_hints=_split(tree_hints),
+        stuck_same_summary=stuck_arg,
     )
     return _dumps(result.to_dict())
 

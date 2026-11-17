@@ -13,6 +13,7 @@
 | E Acceptance Phase 0–5 / Codex sign-off | Open |
 | F Local step trace (timing + tokens) | Done — `android_run_step` journal + `trace.json` + `mau trace` (no LangSmith) |
 | G MCP soft wall budget + L0/propose spans | Done — `TIME_BUDGET` / `continue_hint`; `propose_step` / `l0_step` + `by_via` |
+| H Unchanged-screen + tree-first vision gating | Done — default `stuck_same_summary=3`; `tree_hints` / quoted labels → `tree_shortcut`; see `docs/eval-vision-gating.md` |
 
 ## Env flags
 
@@ -27,6 +28,7 @@
 - On stop, rebuilds `runs/<id>/trace.json` from journal (works across `run-plan` stages + later L0/propose).
 - Totals include `by_via`; CLI: `mau trace [runs/<id>]` (table with `via`) or `--json`.
 - MCP: `wall_budget_ms≈90s`, default `max_steps=10` → `TIME_BUDGET` + `continue_hint` instead of Host `-32001`.
+- Unchanged screen skips VLM (`vlm_skipped` / `unchanged_recover`); tree-first uses `via=tree_shortcut`.
 - Follow-up: if DashScope/`GuiVLM` ever stops updating client token counters, gui-plus per-step tokens may stay `0` (fields still present).
 
 ## Deferred

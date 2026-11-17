@@ -12,6 +12,7 @@ from typing import Any
 VIA_ANDROID_RUN = "android_run"
 VIA_PROPOSE_EXECUTE = "propose_execute"
 VIA_L0_DIRECT = "l0_direct"
+VIA_TREE_SHORTCUT = "tree_shortcut"
 
 
 def normalize_kind(action: dict[str, Any]) -> tuple[str, dict[str, Any]]:

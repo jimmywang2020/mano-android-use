@@ -25,6 +25,7 @@ uv run mau ready                               # screen.awake, tips[]
 | 7 | After any `mau run`: inspect `runs/<id>/journal.jsonl` + `trace.json` | at least one `event=android_run_step` with ms fields; `trace.json` `totals.step_ms` ≥ 0; `mau trace runs/<id>` prints a table with `via` |
 | 8 | MCP soft budget (unit / slow mock): `android_run(..., wall_budget_ms=…)` | `TIME_BUDGET` + `cost_report` + `continue_hint` (not an empty Host timeout) |
 | 9 | After MCP `propose_action` / direct `tap` | journal has `propose_step` / `l0_step`; `totals.by_via` populated; `android_run` internal tap does **not** add `l0_step` |
+| 10 | Vision gating device checks | See [`eval-vision-gating.md`](eval-vision-gating.md) (U1/U2/T1/T2/C1) |
 
 ## Journal checks
 
