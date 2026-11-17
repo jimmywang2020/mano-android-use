@@ -29,6 +29,24 @@ DEFAULT_BLOCK_PATTERNS: tuple[str, ...] = (
 )
 
 
+def sanitize_semantic_hint(
+    hint: str,
+    *,
+    patterns: tuple[str, ...] = DEFAULT_BLOCK_PATTERNS,
+    max_len: int = 120,
+) -> str:
+    """Strip payment/submit phrases from action hints (e.g. goals that say 不要立即支付).
+
+    UI dumps are still checked in full by ``check_action`` / ``screen_looks_dangerous``.
+    """
+    text = hint or ""
+    for p in sorted((x for x in patterns if x), key=len, reverse=True):
+        text = text.replace(p, " ")
+    text = re.sub(r"不要\s*", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text[: max(0, int(max_len))]
+
+
 @dataclass
 class SafetyDecision:
     allow: bool
@@ -82,13 +100,15 @@ class SafetyGateway:
         if kind in {"system_button", "key"} and button in {"BACK", "HOME"}:
             return SafetyDecision(True)
 
+        # Goals often say「不要立即支付」; strip payment phrases from the hint only.
         # Full ui_blob (not a short prefix) — payment strings often appear late in XML.
+        hint = sanitize_semantic_hint(semantic_hint or "")
         hay = " ".join(
             [
                 kind,
                 str(action.get("text") or ""),
                 str(action.get("button") or ""),
-                semantic_hint,
+                hint,
                 ui_blob,
             ]
         )

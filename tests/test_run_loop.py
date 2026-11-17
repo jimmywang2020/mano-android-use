@@ -213,14 +213,15 @@ def test_stuck_on_unchanged_screen_skips_vlm(monkeypatch):
             "pixel": list(action.get("coordinate") or [1, 1]),
         },
     )
-    # First observe → VLM; then recover/wait; STUCK on 3rd unchanged (step 4).
+    # Step1 VLM click arms act_grace (once per sig); next 2 same-screen steps
+    # skip BACK but may still VLM; then recover/wait; STUCK on 3rd post-grace unchanged.
     res = android_run(
         session, "noop", max_steps=10, stuck_repeat=99, stuck_same_summary=3
     )
     assert res.status == TERMINAL_STUCK
-    assert res.steps == 4
+    assert res.steps == 6
     assert "unchanged screen" in res.reason
-    assert proposes["n"] == 1
+    assert proposes["n"] == 3  # initial + 2 grace steps
     assert any(e.get("vlm_skipped") for e in session._events)
     assert res.cost_report and res.cost_report.get("vlm_skipped", 0) >= 1
     assert session._presses and session._presses[0]["button"] == "BACK"
@@ -677,8 +678,51 @@ def test_type_grace_skips_unchanged_back(monkeypatch, tmp_path: Path):
     assert res.status == TERMINAL_OK
     assert n["i"] >= 2  # second propose happened (not BACK-stuck)
     assert not any(e.get("via") == "unchanged_recover" for e in session._events)
-    assert any(h.get("type_grace_armed") for h in res.history)
-    assert any(h.get("type_grace") for h in res.history)
+    assert any(h.get("act_grace_armed") or h.get("type_grace_armed") for h in res.history)
+    assert any(h.get("act_grace") or h.get("type_grace") for h in res.history)
+
+
+def test_click_grace_skips_unchanged_back(monkeypatch, tmp_path: Path):
+    """After click, same screen signature must not trigger BACK recover."""
+    session = _FakeSession(run_dir=tmp_path)
+    n = {"i": 0}
+
+    class _G:
+        model = "fake"
+
+        def propose(self, image, instruction):
+            from mano_android_use.grounder import GrounderResult
+
+            n["i"] += 1
+            if n["i"] == 1:
+                return GrounderResult(
+                    True,
+                    "fake",
+                    {"action": "click", "coordinate": [0.5, 0.5]},
+                    "{}",
+                )
+            return GrounderResult(
+                True,
+                "fake",
+                {"action": "terminate", "status": "success"},
+                "{}",
+            )
+
+    monkeypatch.setattr("mano_android_use.run_loop.Grounder", lambda model=None: _G())
+    res = android_run(
+        session,
+        "tap cold option",
+        max_steps=5,
+        stuck_same_summary=3,
+        stuck_repeat=99,
+    )
+    assert res.status == TERMINAL_OK
+    assert n["i"] >= 2
+    assert not any(e.get("via") == "unchanged_recover" for e in session._events)
+    assert any(h.get("act_grace_armed") for h in res.history)
+    assert any(
+        e.get("event") == "act_grace_skip_unchanged" for e in session._events
+    ) or any(h.get("act_grace") for h in res.history)
 
 
 def test_package_defaults_to_warm_launch(monkeypatch, tmp_path: Path):

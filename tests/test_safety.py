@@ -1,4 +1,4 @@
-from mano_android_use.safety import SafetyGateway
+from mano_android_use.safety import SafetyGateway, sanitize_semantic_hint
 
 
 def test_blocks_payment_text():
@@ -11,6 +11,23 @@ def test_blocks_payment_text():
 def test_allows_normal_tap():
     gw = SafetyGateway()
     d = gw.check_action({"action": "click"}, ui_blob="搜索 黄焖鸡", semantic_hint="open search")
+    assert d.allow
+
+
+def test_sanitize_strips_payment_phrases():
+    out = sanitize_semantic_hint("加购双皮奶，不要立即支付，停在确认页")
+    assert "立即支付" not in out
+    assert "加购" in out or "双皮奶" in out or "确认" in out
+
+
+def test_goal_payment_words_do_not_block_tap_on_safe_ui():
+    """Goal hint with 立即支付 must not BLOCKED when the screen itself is safe."""
+    gw = SafetyGateway()
+    d = gw.check_action(
+        {"action": "click"},
+        ui_blob="外卖 搜索 双皮奶 加购",
+        semantic_hint="美团外卖搜双皮奶加购；不要立即支付",
+    )
     assert d.allow
 
 

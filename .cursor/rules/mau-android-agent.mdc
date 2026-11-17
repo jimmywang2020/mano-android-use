@@ -11,12 +11,13 @@ When controlling Android via this repo's MCP (`mano-android-use` / `mau`):
 
 1. Start with `ready` (or `doctor` then `ready`). Honor `tips[]`, `screen.awake`, `text_backend.available`.
 2. **Default multi-step path:** `android_run` or `android_run_plan` (with `package=` warm-ensure when known; `launch_app` / `cold_start=true` only for true relaunch). Do **not** open installed apps by typing Chinese in a browser. MCP defaults are short (`max_steps≈10`, ~90s soft budget); on `TIME_BUDGET` / Host timeout, **resume with another short `android_run`** from the current screen — **omit `package=`** (or keep `cold_start=false`) so mau does not force-stop; do not pivot the main loop to L0/`propose_action`. Prefer `tree_hints` or「quoted」labels when the target is a stable a11y string so mau can tree-shortcut before VLM.
-3. Do **not** drive multi-step goals with `propose_action` chains or `propose_action(execute=true)` (deprecated). Use L0 `tap`/`swipe`/`type_text`/`press_button` only for install dialogs, one-off correction, or debug. Unchanged screens are handled inside `android_run` (skip VLM → recover → STUCK); after `type`, a short grace skips BACK.
-4. Chinese `type_text` only if AdbKeyboard is available; otherwise tap/launch only and tell the user to install OpenATX AdbKeyboard.
-5. APK install / ColorOS「继续安装」dialogs: handle with `observe`+`tap` or ask the human — not as an `android_run` goal.
-6. If the screen is off, wake/unlock first; `android_run` only tries one `KEYCODE_WAKEUP`.
-7. On `NEED_HUMAN` / `BLOCKED_BY_POLICY` for payment UI, stop.
-8. Wireless ADB: if connect fails, re-pair/connect and refresh `MANO_DEVICE_SERIAL` (ports change). Prefer MCP L0 over shell `adb input tap` so safety + journal apply.
-9. After every `android_run` / `android_run_plan`, **tell the user the cost**: quote `cost_report.narrative` (or summarize totals). Explain who spent time — `observe` (ADB tree/screenshot), `grounder` (VLM, also all tokens), `act` (tap/type/swipe). For plans, also list each stage’s `total_ms` / tokens / `dominant_phase`.
+3. **Goals:** never put payment/submit button copy in the goal (e.g. avoid「立即支付」); say stop-before-pay instead. Meituan-class flows → short staged goals (搜 / 规格加购 / 可选凑单) via `android_run_plan` or several short `android_run`s — not one giant goal.
+4. Do **not** drive multi-step goals with `propose_action` chains or `propose_action(execute=true)` (deprecated). Use L0 `tap`/`swipe`/`type_text`/`press_button` only for install dialogs, one-off correction, or debug. Unchanged screens are handled inside `android_run` (skip VLM → recover → STUCK); after `type`/`click`/`swipe`, a short act grace skips BACK.
+5. Chinese `type_text` only if AdbKeyboard is available; otherwise tap/launch only and tell the user to install OpenATX AdbKeyboard.
+6. APK install / ColorOS「继续安装」dialogs: handle with `observe`+`tap` or ask the human — not as an `android_run` goal.
+7. If the screen is off, wake/unlock first; `android_run` only tries one `KEYCODE_WAKEUP`.
+8. On `NEED_HUMAN` / `BLOCKED_BY_POLICY` for payment UI, stop.
+9. Wireless ADB: if connect fails, re-pair/connect and refresh `MANO_DEVICE_SERIAL` (ports change). Prefer MCP L0 over shell `adb input tap` so safety + journal apply.
+10. After every `android_run` / `android_run_plan`, **tell the user the cost**: quote `cost_report.narrative` (or summarize totals). Explain who spent time — `observe` (ADB tree/screenshot), `grounder` (VLM, also all tokens), `act` (tap/type/swipe). For plans, also list each stage’s `total_ms` / tokens / `dominant_phase`.
 
 Full playbook: [docs/agent-playbook.md](docs/agent-playbook.md).

@@ -9,6 +9,8 @@ from __future__ import annotations
 import time
 from typing import Any
 
+from .safety import sanitize_semantic_hint
+
 VIA_ANDROID_RUN = "android_run"
 VIA_PROPOSE_EXECUTE = "propose_execute"
 VIA_L0_DIRECT = "l0_direct"
@@ -41,7 +43,7 @@ def apply_action(
     """
     mapped = mapped or {}
     kind, action = normalize_kind(action)
-    hint = (semantic_hint or "")[:120]
+    hint = sanitize_semantic_hint(semantic_hint or "")
 
     if kind == "click" and "pixel" in mapped:
         x, y = mapped["pixel"]

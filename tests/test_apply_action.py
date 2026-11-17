@@ -11,7 +11,7 @@ class _Sess:
         self.calls = []
 
     def tap(self, x, y, semantic_hint="", via=None):
-        self.calls.append(("tap", x, y, via))
+        self.calls.append(("tap", x, y, via, semantic_hint))
         return {"ok": True, "via": via}
 
     def swipe(self, x1, y1, x2, y2, duration_ms=700, semantic_hint="", via=None):
@@ -45,7 +45,21 @@ def test_apply_click_via_android_run():
         via=VIA_ANDROID_RUN,
     )
     assert out["ok"] and out["via"] == VIA_ANDROID_RUN
-    assert s.calls == [("tap", 10, 20, VIA_ANDROID_RUN)]
+    assert s.calls[0][:4] == ("tap", 10, 20, VIA_ANDROID_RUN)
+
+
+def test_apply_strips_payment_from_semantic_hint():
+    s = _Sess()
+    out = apply_action(
+        s,
+        {"action": "click"},
+        {"pixel": [1, 2]},
+        semantic_hint="加购外卖；不要立即支付",
+        via=VIA_ANDROID_RUN,
+    )
+    assert out["ok"]
+    hint = s.calls[0][4]
+    assert "立即支付" not in hint
 
 
 def test_apply_press_alias():

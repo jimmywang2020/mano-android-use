@@ -36,10 +36,13 @@ MCP `android_run` defaults to **short** calls (`max_steps=10`, wall soft-budget 
 budget is hit, mau returns `TIME_BUDGET` with `cost_report` + `continue_hint` instead of hanging
 until the Host times out empty.
 
-- On `TIME_BUDGET` / timeout: **resume with another short `android_run`** (same package, current
-  screen) — do **not** switch the main loop to L0 / `propose_action`.
+- On `TIME_BUDGET` / timeout: **resume with another short `android_run`** from the current
+  screen — **omit `package=`** (warm already; avoid force-stop). Do **not** switch the main
+  loop to L0 / `propose_action`.
 - Very long jobs: prefer CLI `mau run` / `mau run-plan` (no MCP soft budget by default), or
   multiple short MCP stages via `android_run_plan`.
+- **Goal wording:** do not put payment/submit button copy in the goal (e.g. avoid「立即支付」);
+  prefer「停在确认页 / 不要付款」. Meituan-class flows → short stages (搜 → 规格加购 → 可选凑单).
 
 ### Unchanged screen + tree-first (skip VLM when possible)
 
@@ -49,11 +52,14 @@ Inside `android_run` (default `stuck_same_summary=3`, override with `0` / env `M
    (`package` + summary, plus tree fingerprint when summary is thin).
 2. If signature **unchanged** vs previous step: **do not call VLM** and **do not take a
    screenshot** — first time `BACK` recover, then short wait, then `STUCK` + `continue_hint`.
-   Exception: after a successful `type`, the next few steps skip unchanged→BACK (IME/search grace).
+   Exception: after a successful `type` / `click` / `swipe`, the next few steps skip
+   unchanged→BACK (`act_grace`; IME / sheet settle).
 3. Before VLM: try **tree-first** — `tree_hints` and/or「quoted」labels in the goal; unique `find`
    hit → tap with `via=tree_shortcut` (`grounder_ms=0`, still no PNG).
 4. Only when VLM is required: **one** upgrade to `full` (screenshot+XML in one window) —
    not tree-then-shot. `cost_report` shows observe split (`screenshot_ms` / `xml_ms` / modes).
+   Dump failures degrade tree/full → `shot` or fail fast (`ERROR`) so one step cannot burn the
+   whole MCP wall budget.
 
 `package=` on `android_run` is **warm** by default (no force-stop if already foreground).
 Use `cold_start=true` / CLI `--cold-start` / `launch_app` only for a true relaunch. On
@@ -146,6 +152,7 @@ Runner: `mau run-plan <plan.json>` or MCP `android_run_plan`.
 | 美团粿条外卖 | [examples/plans/meituan-guotiao-takeout.json](examples/plans/meituan-guotiao-takeout.json) |
 
 Same code path; only package / labels / goals change. Host can also call `android_run` three times by hand.
+Latency / dump baseline: [`docs/eval-latency.md`](eval-latency.md).
 
 Between stages, `PlanState` injects into the next stage prompt: completed stage ids,
 last screen summary, and **do not redo completed stages** (no unnecessary relaunch /

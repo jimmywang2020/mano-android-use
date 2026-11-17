@@ -28,9 +28,10 @@ from .tree import compact_nodes
 
 _DEFAULT_STUCK_SAME = 3
 _SPARSE_TREE_MIN_NODES = 3
-# After a successful type, skip unchanged→BACK for this many following steps so
-# search suggestions / IME can settle without undoing the typed query.
-_TYPE_GRACE_STEPS = 2
+# After a successful type/click/swipe, skip unchanged→BACK for this many
+# following steps so IME / sheet animations can settle without undoing the act.
+_ACT_GRACE_STEPS = 2
+_ACT_GRACE_KINDS = frozenset({"type", "click", "swipe"})
 _QUOTED_LABEL_RE = re.compile(
     r"[「『\"“]([^」』\"”]{1,24})[」』\"”]"
 )
@@ -384,8 +385,8 @@ def android_run(
 
     ``stuck_same_summary``: if > 0, skip VLM on unchanged screen (recover then
     STUCK). Default 3; ``0`` disables; ``None`` reads ``MAU_STUCK_SAME_SUMMARY``.
-    After a successful ``type``, the next ``_TYPE_GRACE_STEPS`` steps skip
-    unchanged→BACK so search IME/suggestions can settle.
+    After a successful ``type`` / ``click`` / ``swipe``, the next
+    ``_ACT_GRACE_STEPS`` steps skip unchanged→BACK so IME / sheets can settle.
 
     ``tree_hints``: optional labels for tree-first find before VLM (also uses
     quoted labels inside ``goal``). Unique hit → tap with ``via=tree_shortcut``.
@@ -458,7 +459,10 @@ def android_run(
     check_feedback = ""
     prev_screen_sig = ""
     unchanged_streak = 0
-    type_grace_remaining = 0
+    act_grace_remaining = 0
+    # Grace arms at most once per screen signature so repeated no-op clicks
+    # cannot refresh the window forever and block unchanged→STUCK.
+    act_grace_sig = ""
     t_run0 = time.perf_counter()
     wall_budget_ms = max(0, int(wall_budget_ms or 0))
 
@@ -527,7 +531,27 @@ def android_run(
                 )
 
         t_obs0 = time.perf_counter()
-        obs = session.observe(detail="tree")
+        try:
+            obs = session.observe(detail="tree")
+        except Exception as exc:  # noqa: BLE001 — fail fast; do not burn MCP wall
+            observe_ms = max(0, int((time.perf_counter() - t_obs0) * 1000))
+            session.log_event(
+                {
+                    "event": "android_run_stop",
+                    "status": TERMINAL_ERROR,
+                    "step": step,
+                    "via": VIA_ANDROID_RUN,
+                    "reason": "observe_failed",
+                    "error": str(exc)[:300],
+                    "observe_ms": observe_ms,
+                }
+            )
+            return _result(
+                TERMINAL_ERROR,
+                steps=max(0, step - 1),
+                reason=f"observe failed: {exc}",
+                with_continue_hint=True,
+            )
         observe_ms = max(0, int((time.perf_counter() - t_obs0) * 1000))
         observe_bd = _merge_observe_breakdown(None, obs)
         last_summary = str(obs.get("summary") or "")
@@ -549,18 +573,21 @@ def android_run(
         }
 
         if stuck_same_summary > 0 and prev_screen_sig and sig == prev_screen_sig:
-            if type_grace_remaining > 0:
-                # Recent type: do not BACK; let tree_shortcut / VLM continue.
-                type_grace_remaining -= 1
+            if act_grace_remaining > 0:
+                # Recent type/click/swipe: do not BACK; let tree_shortcut / VLM continue.
+                act_grace_remaining -= 1
+                entry["act_grace"] = True
+                entry["act_grace_remaining"] = act_grace_remaining
+                # Keep type_grace_* aliases for older journals / tests.
                 entry["type_grace"] = True
-                entry["type_grace_remaining"] = type_grace_remaining
+                entry["type_grace_remaining"] = act_grace_remaining
                 unchanged_streak = 0
                 prev_screen_sig = sig
                 session.log_event(
                     {
-                        "event": "type_grace_skip_unchanged",
+                        "event": "act_grace_skip_unchanged",
                         "step": step,
-                        "type_grace_remaining": type_grace_remaining,
+                        "act_grace_remaining": act_grace_remaining,
                     }
                 )
             else:
@@ -692,7 +719,7 @@ def android_run(
             exec_result = session.tap(
                 int(tree_hit["x"]),
                 int(tree_hit["y"]),
-                semantic_hint=str(tree_hit.get("query") or goal)[:120],
+                semantic_hint=str(tree_hit.get("query") or goal),
                 via=VIA_TREE_SHORTCUT,
             )
             act_ms = max(0, int((time.perf_counter() - t_act0) * 1000))
@@ -701,6 +728,10 @@ def android_run(
                 "xy": [tree_hit["x"], tree_hit["y"]],
             }
             entry["execution"] = exec_result
+            if exec_result.get("ok") and act_grace_sig != sig:
+                act_grace_remaining = _ACT_GRACE_STEPS
+                act_grace_sig = sig
+                entry["act_grace_armed"] = act_grace_remaining
             _record_step_timing(
                 session,
                 entry,
@@ -904,15 +935,19 @@ def android_run(
             session,
             action,
             mapped,
-            semantic_hint=goal[:120],
+            semantic_hint=goal,
             via=VIA_ANDROID_RUN,
         )
         act_ms = max(0, int((time.perf_counter() - t_act0) * 1000))
 
         entry["execution"] = exec_result
-        if exec_result.get("ok") and str(action.get("action") or "") == "type":
-            type_grace_remaining = _TYPE_GRACE_STEPS
-            entry["type_grace_armed"] = type_grace_remaining
+        kind = str(action.get("action") or "")
+        if exec_result.get("ok") and kind in _ACT_GRACE_KINDS and act_grace_sig != sig:
+            act_grace_remaining = _ACT_GRACE_STEPS
+            act_grace_sig = sig
+            entry["act_grace_armed"] = act_grace_remaining
+            if kind == "type":
+                entry["type_grace_armed"] = act_grace_remaining
         _record_step_timing(
             session,
             entry,

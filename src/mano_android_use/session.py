@@ -167,14 +167,60 @@ class DeviceSession:
         elif self.step <= 0:
             self.step = 1
         fallback = self.last_size if self.last_size[0] > 0 and self.last_size[1] > 0 else None
-        obs = capture_observation(
-            self.adb,
-            self.run_dir,
-            self.step,
-            capture_frame=self._capture_frame,
-            mode=mode,  # type: ignore[arg-type]
-            fallback_size=fallback,
-        )
+
+        def _capture(m: str):
+            return capture_observation(
+                self.adb,
+                self.run_dir,
+                self.step,
+                capture_frame=self._capture_frame,
+                mode=m,  # type: ignore[arg-type]
+                fallback_size=fallback,
+            )
+
+        degrade_from = ""
+        try:
+            obs = _capture(mode)
+        except Exception as exc:  # noqa: BLE001 — dump spikes / OOM must fail fast or degrade
+            err = str(exc)[:300]
+            code = str(getattr(exc, "code", "") or "")
+            # tree dump failed → shot (skip gate); full dump failed → shot then re-raise.
+            if mode == "tree":
+                degrade_from = "tree"
+                self._log(
+                    {
+                        "event": "observe_degrade",
+                        "from_mode": "tree",
+                        "to_mode": "shot",
+                        "error": err,
+                        "code": code,
+                    }
+                )
+                try:
+                    obs = _capture("shot")
+                except Exception as exc2:  # noqa: BLE001
+                    raise ManoError(
+                        f"observe dump failed (tree→shot): {exc2}"
+                    ) from exc2
+            elif mode == "full":
+                degrade_from = "full"
+                self._log(
+                    {
+                        "event": "observe_degrade",
+                        "from_mode": "full",
+                        "to_mode": "shot",
+                        "error": err,
+                        "code": code,
+                    }
+                )
+                try:
+                    obs = _capture("shot")
+                except Exception as exc2:  # noqa: BLE001
+                    raise ManoError(
+                        f"observe dump failed (full→shot): {exc2}"
+                    ) from exc2
+            else:
+                raise ManoError(f"observe failed ({mode}): {err}") from exc
         # Partial modes must not wipe the other modality's last_* cache.
         if obs.xml:
             self.last_xml = obs.xml
@@ -202,6 +248,8 @@ class DeviceSession:
             "screenshot_skipped": bool(obs.screenshot_skipped),
             "xml_skipped": bool(obs.xml_skipped),
         }
+        if degrade_from:
+            breakdown["degraded_from"] = degrade_from
         payload: dict[str, Any] = {
             "step": self.step,
             "observation_id": obs.observation_id,
@@ -270,16 +318,20 @@ class DeviceSession:
                     }
                 )
                 return {"ok": True, "package": pkg, "mode": "already_foreground"}
-            # Warm bring-to-front: monkey without force-stop.
-            self.adb.shell(
-                "monkey",
-                "-p",
-                pkg,
-                "-c",
-                "android.intent.category.LAUNCHER",
-                "1",
-            )
-            time.sleep(1.5)
+            # Warm bring-to-front: prefer Core warm_start when available.
+            warm = getattr(self.adb, "warm_start", None)
+            if callable(warm):
+                warm(pkg)
+            else:
+                self.adb.shell(
+                    "monkey",
+                    "-p",
+                    pkg,
+                    "-c",
+                    "android.intent.category.LAUNCHER",
+                    "1",
+                )
+                time.sleep(1.5)
             self._log({"event": "launch", "package": pkg, "mode": "warm", "cold": False})
             return {"ok": True, "package": pkg, "mode": "warm"}
         self.adb.cold_start(pkg)
