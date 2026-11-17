@@ -350,7 +350,7 @@ def cost_report_from_doc(doc: dict[str, Any]) -> dict[str, Any]:
         "observe": {
             "ms": obs,
             "pct": _pct(obs, total),
-            "what": "ADB capture (tree/shot/full; gated on-demand)",
+            "what": "ADB capture (android_run: full every step; L0 may use tree/shot)",
             "screenshot_ms": shot_ms,
             "xml_ms": xml_ms,
             "by_mode": dict(by_mode) if by_mode else {},

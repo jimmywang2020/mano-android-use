@@ -532,7 +532,9 @@ def android_run(
 
         t_obs0 = time.perf_counter()
         try:
-            obs = session.observe(detail="tree")
+            # Every step: one full capture (screenshot+XML). Tree gate / VLM skip
+            # still apply on the same observe — no tree→full double tax.
+            obs = session.observe(detail="both")
         except Exception as exc:  # noqa: BLE001 — fail fast; do not burn MCP wall
             observe_ms = max(0, int((time.perf_counter() - t_obs0) * 1000))
             session.log_event(
@@ -569,7 +571,7 @@ def android_run(
             "observe_safety": safety,
             "screen_sig": sig,
             "observe_breakdown": observe_bd,
-            "capture_mode": obs.get("capture_mode") or "tree",
+            "capture_mode": obs.get("capture_mode") or "full",
         }
 
         if stuck_same_summary > 0 and prev_screen_sig and sig == prev_screen_sig:
@@ -769,7 +771,7 @@ def android_run(
             tree_candidates = [c for c in tree_candidates if c != used]
             continue
 
-        # Tree gate done; pay for PNG (shot) or full only when VLM is required.
+        # Fallback if full observe somehow lacked a PNG (should be no-op normally).
         obs, upgrade_ms, upgrade_reason = ensure_observation_for_grounder(session, obs)
         if upgrade_reason:
             observe_ms += upgrade_ms

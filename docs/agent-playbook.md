@@ -44,29 +44,32 @@ until the Host times out empty.
 - **Goal wording:** do not put payment/submit button copy in the goal (e.g. avoid「立即支付」);
   prefer「停在确认页 / 不要付款」. Meituan-class flows → short stages (搜 → 规格加购 → 可选凑单).
 
-### Unchanged screen + tree-first (skip VLM when possible)
+### Full observe + skip VLM when possible
 
 Inside `android_run` (default `stuck_same_summary=3`, override with `0` / env `MAU_STUCK_SAME_SUMMARY`):
 
-1. **Tree observe first** (`capture_mode=tree`: accessibility dump, no PNG) → screen signature
-   (`package` + summary, plus tree fingerprint when summary is thin).
-2. If signature **unchanged** vs previous step: **do not call VLM** and **do not take a
-   screenshot** — first time `BACK` recover, then short wait, then `STUCK` + `continue_hint`.
-   Exception: after a successful `type` / `click` / `swipe`, the next few steps skip
-   unchanged→BACK (`act_grace`; IME / sheet settle).
-3. Before VLM: try **tree-first** — `tree_hints` and/or「quoted」labels in the goal; unique `find`
-   hit → tap with `via=tree_shortcut` (`grounder_ms=0`, still no PNG).
-4. Only when VLM is required: **one** upgrade to `full` (screenshot+XML in one window) —
-   not tree-then-shot. `cost_report` shows observe split (`screenshot_ms` / `xml_ms` / modes).
-   Dump failures degrade tree/full → `shot` or fail fast (`ERROR`) so one step cannot burn the
-   whole MCP wall budget.
+1. **Every step: one `full` observe** (`capture_mode=full`: screenshot+XML in one window) →
+   screen signature (`package` + summary, plus tree fingerprint when summary is thin).
+   Do **not** gate on tree-only then upgrade (avoids tree→full double tax on Meituan-class UIs).
+2. If signature **unchanged** vs previous step: **do not call VLM** — first time `BACK`
+   recover, then short wait, then `STUCK` + `continue_hint`. Exception: after a successful
+   `type` / `click` / `swipe`, the next few steps skip unchanged→BACK (`act_grace`; IME /
+   sheet settle).
+3. Before VLM: try **tree-first** on the same dump — `tree_hints` and/or「quoted」labels in
+   the goal; unique `find` hit → tap with `via=tree_shortcut` (`grounder_ms=0`; PNG already
+   paid this step, unused by Grounder).
+4. When VLM is required: reuse the step’s PNG (no second capture). `cost_report` shows
+   observe split (`screenshot_ms` / `xml_ms` / modes). Dump failures degrade full → `shot`
+   or fail fast (`ERROR`) so one step cannot burn the whole MCP wall budget.
 
 `package=` on `android_run` is **warm** by default (no force-stop if already foreground).
 Use `cold_start=true` / CLI `--cold-start` / `launch_app` only for a true relaunch. On
 `TIME_BUDGET` resume, omit `package=` when the app is already open.
 
-Host should pass stable labels when known (e.g. `tree_hints=设置` or goal `打开「设置」`).
-MCP `observe(detail=tree|screenshot|both)` maps to Core `tree|shot|full`.
+Host should pass stable labels when known (e.g. `tree_hints=设置` or goal `打开「设置」`)
+and prefer short staged goals for Meituan-class flows.
+L0 MCP `observe(detail=tree|screenshot|both)` still maps to Core `tree|shot|full` for
+manual/debug; `android_run` always uses `full`.
 Acceptance checklist: [`docs/eval-vision-gating.md`](eval-vision-gating.md).
 
 ## Open an app

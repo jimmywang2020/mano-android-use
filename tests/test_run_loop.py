@@ -523,7 +523,8 @@ def test_tree_is_sparse():
     )
 
 
-def test_vlm_path_upgrades_tree_to_full(monkeypatch, tmp_path: Path):
+def test_vlm_path_uses_single_full_observe(monkeypatch, tmp_path: Path):
+    """android_run pays one full observe per step; no tree→full upgrade tax."""
     session = _FakeSession(run_dir=tmp_path)
 
     class _G:
@@ -544,19 +545,19 @@ def test_vlm_path_upgrades_tree_to_full(monkeypatch, tmp_path: Path):
     res = android_run(session, "done", max_steps=3, stuck_same_summary=0)
     assert res.status == TERMINAL_OK
     modes = [c["mode"] for c in session._observe_calls]
-    assert modes[0] == "tree"
-    assert "full" in modes
-    assert "shot" not in modes  # single full upgrade, not tree-then-shot
-    assert res.history[0].get("observe_upgrade") == "full_for_vlm"
+    assert modes == ["full"]  # one step, one full; no upgrade re-observe
+    assert "shot" not in modes
+    assert not res.history[0].get("observe_upgrade")
     timing = res.history[0]["timing"]
     assert timing.get("observe_mode") == "full"
     assert int(timing.get("observe_xml_ms") or 0) >= 0
     assert int(timing.get("observe_screenshot_ms") or 0) >= 0
 
 
-def test_sparse_tree_upgrades_to_full(monkeypatch, tmp_path: Path):
+def test_sparse_tree_still_vlm_with_full(monkeypatch, tmp_path: Path):
+    """Empty a11y does not block VLM when every step already has a full PNG."""
     session = _FakeSession(run_dir=tmp_path)
-    session._tree_nodes = []  # empty a11y → full upgrade
+    session._tree_nodes = []
 
     class _G:
         model = "fake"
@@ -575,12 +576,12 @@ def test_sparse_tree_upgrades_to_full(monkeypatch, tmp_path: Path):
     res = android_run(session, "webview", max_steps=3, stuck_same_summary=0)
     assert res.status == TERMINAL_OK
     modes = [c["mode"] for c in session._observe_calls]
-    assert modes[0] == "tree"
-    assert "full" in modes
-    assert res.history[0].get("observe_upgrade") == "full_sparse_tree"
+    assert modes == ["full"]
+    assert not res.history[0].get("observe_upgrade")
 
 
-def test_tree_shortcut_never_full_observe(monkeypatch, tmp_path: Path):
+def test_tree_shortcut_still_uses_full_observe(monkeypatch, tmp_path: Path):
+    """tree_shortcut skips VLM but still uses the step's full capture (XML+PNG)."""
     session = _FakeSession(run_dir=tmp_path)
     session._find_hits = [{"text": "设置", "center": [1, 2], "clickable": True}]
 
@@ -626,7 +627,11 @@ def test_tree_shortcut_never_full_observe(monkeypatch, tmp_path: Path):
             "screenshot_path": shot,
             "capture_mode": mode,
             "tree_compact": list(session._tree_nodes),
-            "observe_breakdown": {"capture_mode": mode, "screenshot_ms": 0, "xml_ms": 1},
+            "observe_breakdown": {
+                "capture_mode": mode,
+                "screenshot_ms": 1 if mode in {"full", "shot"} else 0,
+                "xml_ms": 1 if mode in {"full", "tree"} else 0,
+            },
         }
 
     session.observe = _obs  # type: ignore[method-assign]
@@ -638,10 +643,11 @@ def test_tree_shortcut_never_full_observe(monkeypatch, tmp_path: Path):
         stuck_same_summary=0,
     )
     assert res.status == TERMINAL_OK
-    # First step tree_shortcut: tree only. Second step VLM: tree then one full.
-    assert session._observe_calls[0]["mode"] == "tree"
-    assert session._observe_calls[0]["mode"] != "full"
-    assert any(c["mode"] == "full" for c in session._observe_calls[1:])
+    assert session._observe_calls[0]["mode"] == "full"
+    assert session._taps and session._taps[0]["via"] == "tree_shortcut"
+    # Second step is VLM terminate — still one full per step, no upgrade re-observe.
+    assert all(c["mode"] == "full" for c in session._observe_calls)
+    assert all(c.get("bump_step") for c in session._observe_calls)
 
 
 def test_type_grace_skips_unchanged_back(monkeypatch, tmp_path: Path):
