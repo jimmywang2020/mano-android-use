@@ -2,7 +2,7 @@
 
 **English** · [中文](README.zh-CN.md)
 
-Android **MCP Agent tools (A′)** on top of pinned [`mano@v0.1.2`](https://github.com/jimmywang2020/mano.git).
+Android **MCP Agent tools (A′)** on top of pinned [`mano@v0.1.4`](https://github.com/jimmywang2020/mano.git).
 
 This is a **Consumer / MCP facade** over mano Core — **not** a fork of Core. Use an **independent** project environment (do not activate `mano/`’s `.venv`).
 

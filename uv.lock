@@ -391,8 +391,8 @@ wheels = [
 
 [[package]]
 name = "mano"
-version = "0.1.3"
-source = { git = "https://github.com/jimmywang2020/mano.git?rev=v0.1.3#f1a7372fc7dd825739a1a42bb15860964098c206" }
+version = "0.1.4"
+source = { git = "https://github.com/jimmywang2020/mano.git?rev=v0.1.4#589604776aad86f7116989d9444c487c96a3c386" }
 
 [[package]]
 name = "mano-android-use"
@@ -410,7 +410,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "mano", git = "https://github.com/jimmywang2020/mano.git?rev=v0.1.3" },
+    { name = "mano", git = "https://github.com/jimmywang2020/mano.git?rev=v0.1.4" },
     { name = "mcp", specifier = ">=1.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
 ]
