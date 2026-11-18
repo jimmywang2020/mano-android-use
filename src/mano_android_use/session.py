@@ -76,6 +76,25 @@ class DeviceSession:
             run_id=run_id,
         )
 
+    def begin_run(self, *, runs_root: Path | str | None = None) -> dict[str, Any]:
+        """Open a fresh run_id/run_dir for the next android_run / plan.
+
+        Keeps the ADB connection, safety gateway, and last observe cache so a
+        warm resume does not force-stop the app. Prevents Host cost_report from
+        accumulating prior MCP tasks that shared one long-lived session.
+        """
+        root = Path(runs_root) if runs_root is not None else self.run_dir.parent
+        root.mkdir(parents=True, exist_ok=True)
+        run_id = time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6]
+        run_dir = root / run_id
+        run_dir.mkdir(parents=True, exist_ok=True)
+        self.run_id = run_id
+        self.run_dir = run_dir
+        self.step = 0
+        self._journal = []
+        self.log_event({"event": "begin_run", "run_id": run_id, "run_dir": str(run_dir)})
+        return {"run_id": run_id, "run_dir": str(run_dir)}
+
     def doctor(self) -> dict[str, Any]:
         adb_bin = find_adb()
         try:
@@ -277,8 +296,12 @@ class DeviceSession:
         if obs.width > 0 and obs.height > 0:
             self.last_size = (obs.width, obs.height)
         xml_for_tree = obs.xml if obs.xml else self.last_xml
-        nodes = compact_nodes(xml_for_tree, max_nodes=max_nodes) if xml_for_tree else []
         package = obs.foreground or self.last_package
+        nodes = (
+            compact_nodes(xml_for_tree, max_nodes=max_nodes, package=package)
+            if xml_for_tree
+            else []
+        )
         summary = summarize(package, nodes)
         danger = self.safety.screen_looks_dangerous(
             " ".join(
@@ -341,7 +364,12 @@ class DeviceSession:
     def find(self, query: str, *, limit: int = 10) -> dict[str, Any]:
         if not self.last_xml:
             self.observe(detail="tree")
-        hits = find_by_text(self.last_xml, query, limit=limit)
+        hits = find_by_text(
+            self.last_xml,
+            query,
+            limit=limit,
+            package=self.last_package or None,
+        )
         return {"query": query, "count": len(hits), "hits": hits}
 
     def launch(self, package: str, *, cold: bool = False) -> dict[str, Any]:

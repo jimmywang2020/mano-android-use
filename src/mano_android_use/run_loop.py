@@ -16,11 +16,11 @@ from typing import Any
 from .apply_action import VIA_ANDROID_RUN, VIA_TREE_SHORTCUT, apply_action
 from .grounder import Grounder, GrounderResult, pixel_from_normalized
 from .session import DeviceSession
-from .success_check import SuccessCheck, evaluate_success
+from .success_check import SuccessCheck, evaluate_success, progress_from_verdict
 from .tips import build_tips
 from .trace_report import (
     build_step_span,
-    cost_report_from_doc,
+    cost_report_from_history,
     trace_summary_from_doc,
     write_trace,
 )
@@ -116,14 +116,28 @@ def continue_hint_for_run(
     package: str = "",
     last_summary: str = "",
     status: str = "",
+    progress: dict[str, Any] | None = None,
+    screen_digest: dict[str, Any] | None = None,
+    tree_hints: list[str] | None = None,
+    success_check: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Host guidance after TIME_BUDGET / incomplete MCP runs."""
+    """Host ResumeSpec after TIME_BUDGET / STUCK / incomplete MCP runs.
+
+    Keeps legacy keys (``action``, ``goal``, …) and adds structured ``do`` /
+    ``dont`` / ``progress`` so Host can resume by filling a form instead of
+    rewriting the goal or pressing HOME.
+    """
+    digest = screen_digest if isinstance(screen_digest, dict) else {}
+    prog = dict(progress or {})
+    hints = [str(h).strip() for h in (tree_hints or []) if str(h).strip()]
+    check = success_check if isinstance(success_check, dict) else None
     return {
+        # Legacy keys (compat)
         "action": "android_run",
         "suggestion": (
             "Resume with a short android_run from the current screen; "
             "omit package= (or cold_start=false) so mau does not force-stop; "
-            "avoid L0 as the main loop."
+            "avoid L0 as the main loop. Prefer resume.do fields; honor dont[]."
         ),
         "goal": goal,
         "package": package or "",
@@ -131,6 +145,26 @@ def continue_hint_for_run(
         "recommended_max_steps": 8,
         "cold_start": False,
         "reason": status or "",
+        # ResumeSpec (structured)
+        "next_actor": "host",
+        "do": {
+            "tool": "android_run",
+            "goal": goal,
+            "omit_package": True,
+            "cold_start": False,
+            "max_steps": 8,
+            "tree_hints": hints,
+            "success_check": check or {},
+        },
+        "dont": [
+            "HOME",
+            "force_stop",
+            "launch_app",
+            "rewrite_goal_from_scratch",
+            "propose_action_loop",
+        ],
+        "progress": prog,
+        "screen_digest": digest,
     }
 
 
@@ -153,6 +187,8 @@ class RunResult:
     trace_summary: dict[str, Any] | None = None
     cost_report: dict[str, Any] | None = None
     continue_hint: dict[str, Any] | None = None
+    progress: dict[str, Any] | None = None
+    screen_digest: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         out = {
@@ -181,6 +217,12 @@ class RunResult:
             out["cost_report"] = self.cost_report
         if self.continue_hint is not None:
             out["continue_hint"] = self.continue_hint
+            # Alias for Host TaskState consumers
+            out["resume"] = self.continue_hint
+        if self.progress:
+            out["progress"] = self.progress
+        if self.screen_digest is not None:
+            out["screen_digest"] = self.screen_digest
         return out
 
 
@@ -253,22 +295,40 @@ def screen_signature(
     summary: str,
     xml: str = "",
 ) -> str:
-    """Stable-ish screen id for unchanged detection (no image hash required)."""
+    """Stable-ish screen id for unchanged detection (no image hash required).
+
+    Always folds in a systemui-filtered foreground tree fingerprint so ColorOS
+    status-bar noise cannot pin the signature across real UI changes.
+    """
+    from .tree import screen_digest_labels
+
     pkg = (package or "").strip()
     summ = _normalize_summary(summary)
-    # Short / empty summaries (WebView) → fold in a coarse tree fingerprint.
-    if len(summ) < 24 or "labels=[]" in summ:
-        nodes = compact_nodes(xml or "", max_nodes=40)
-        labels = []
-        for n in nodes:
-            lab = n.get("text") or n.get("desc") or n.get("resource_id")
-            if lab:
-                labels.append(str(lab)[:32])
-            if len(labels) >= 12:
-                break
-        tree_fp = "|".join(labels)
+    labels = screen_digest_labels(xml or "", package=pkg or None, max_labels=16, max_nodes=80)
+    tree_fp = "|".join(labels) if labels else ""
+    # Prefer digest when summary is empty/thin; always append fingerprint when present.
+    if tree_fp:
         return f"{pkg}::{summ}::{tree_fp}"
     return f"{pkg}::{summ}"
+
+
+def screen_digest_dict(
+    *,
+    package: str,
+    summary: str,
+    xml: str = "",
+) -> dict[str, Any]:
+    """Host-facing digest: filtered labels + signature (no full XML)."""
+    from .tree import screen_digest_labels
+
+    pkg = (package or "").strip()
+    labels = screen_digest_labels(xml or "", package=pkg or None, max_labels=24, max_nodes=120)
+    return {
+        "package": pkg,
+        "labels": labels,
+        "summary": _normalize_summary(summary)[:240],
+        "signature": screen_signature(package=pkg, summary=summary, xml=xml),
+    }
 
 
 def resolve_stuck_same_summary(value: int | None = None) -> int:
@@ -383,6 +443,7 @@ def android_run(
     wall_budget_ms: int = 0,
     tree_hints: list[str] | None = None,
     cold_start: bool = False,
+    new_run: bool = True,
 ) -> RunResult:
     """Run a bounded observe→propose→act loop toward ``goal``.
 
@@ -403,7 +464,12 @@ def android_run(
 
     ``package`` + ``cold_start=False`` (default): warm ensure (skip force-stop when
     already foreground). Pass ``cold_start=True`` only for a true relaunch.
+
+    ``new_run``: when True (default), rotate to a fresh ``run_id``/``run_dir`` so
+    Host ``cost_report`` is scoped to this call. Plan stages pass False.
     """
+    if new_run and hasattr(session, "begin_run"):
+        session.begin_run()
     goal = (goal or "").strip()
     stuck_same_summary = resolve_stuck_same_summary(stuck_same_summary)
     tree_candidates = collect_tree_candidates(goal, tree_hints)
@@ -470,8 +536,15 @@ def android_run(
     # Grace arms at most once per screen signature so repeated no-op clicks
     # cannot refresh the window forever and block unchanged→STUCK.
     act_grace_sig = ""
+    progress: dict[str, Any] = {}
+    last_digest: dict[str, Any] = {}
     t_run0 = time.perf_counter()
     wall_budget_ms = max(0, int(wall_budget_ms or 0))
+
+    def _merge_progress(extra: dict[str, Any] | None) -> None:
+        for k, v in (extra or {}).items():
+            if v:
+                progress[k] = v
 
     def _result(
         status: str,
@@ -496,6 +569,10 @@ def android_run(
                 package=last_package,
                 last_summary=last_summary,
                 status=status,
+                progress=progress,
+                screen_digest=last_digest,
+                tree_hints=tree_candidates,
+                success_check=check_dict,
             )
         return RunResult(
             status=status,
@@ -510,9 +587,13 @@ def android_run(
             history=history,
             success_check=check_dict,
             success_verdict=verdict,
+            # Host cost is scoped to this android_run history (not prior MCP
+            # tasks that may share a long-lived DeviceSession before begin_run).
             trace_summary=trace_summary_from_doc(trace_doc),
-            cost_report=cost_report_from_doc(trace_doc),
+            cost_report=cost_report_from_history(history),
             continue_hint=hint,
+            progress=dict(progress) if progress else None,
+            screen_digest=dict(last_digest) if last_digest else None,
         )
 
     for step in range(1, max_steps + 1):
@@ -566,20 +647,73 @@ def android_run(
         last_summary = str(obs.get("summary") or "")
         last_package = str(obs.get("package") or "")
         safety = obs.get("safety") or {}
-        sig = screen_signature(
+        last_digest = screen_digest_dict(
             package=last_package,
             summary=last_summary,
             xml=session.last_xml or "",
         )
+        sig = str(last_digest.get("signature") or "")
         entry: dict[str, Any] = {
             "step": step,
             "summary": last_summary,
             "package": last_package,
             "observe_safety": safety,
             "screen_sig": sig,
+            "screen_digest": last_digest,
             "observe_breakdown": observe_bd,
             "capture_mode": obs.get("capture_mode") or "full",
         }
+
+        if safety.get("code") == "NEED_HUMAN" or safety.get("allow") is False:
+            _record_step_timing(
+                session,
+                entry,
+                step=step,
+                model=grounder.model,
+                observe_ms=observe_ms,
+            )
+            entry["stop"] = TERMINAL_HUMAN
+            history.append(entry)
+            session.log_event({"event": "android_run_stop", "status": TERMINAL_HUMAN, "step": step})
+            return _result(
+                TERMINAL_HUMAN,
+                steps=step,
+                reason=str(safety.get("reason") or "payment/submit UI"),
+            )
+
+        # External verifier BEFORE unchanged recover — so fare/cart screens are
+        # not undone by a false-identical dirty signature (U2/ColorOS).
+        if success_check and not success_check.is_empty():
+            verdict = evaluate_success(
+                success_check,
+                package=last_package,
+                summary=last_summary,
+                xml=session.last_xml or "",
+            )
+            entry["success_check"] = verdict.to_dict()
+            _merge_progress(progress_from_verdict(success_check, verdict))
+            entry["progress"] = dict(progress)
+            if verdict.ok:
+                _record_step_timing(
+                    session,
+                    entry,
+                    step=step,
+                    model=grounder.model,
+                    observe_ms=observe_ms,
+                    vlm_skipped=True,
+                    skip_reason="success_check",
+                )
+                entry["stop"] = TERMINAL_OK
+                history.append(entry)
+                session.log_event(
+                    {"event": "android_run_stop", "status": TERMINAL_OK, "step": step, "via": "success_check"}
+                )
+                return _result(
+                    TERMINAL_OK,
+                    steps=step,
+                    reason="success_check satisfied",
+                    verdict=verdict.to_dict(),
+                )
 
         if stuck_same_summary > 0 and prev_screen_sig and sig == prev_screen_sig:
             if act_grace_remaining > 0:
@@ -598,6 +732,36 @@ def android_run(
                         "step": step,
                         "act_grace_remaining": act_grace_remaining,
                     }
+                )
+            elif progress.get("fare_seen") or progress.get("cart_seen"):
+                # Saw fare/cart labels but full success_check not yet ok — hold
+                # the screen (no BACK) and hand Host a ResumeSpec with progress.
+                _record_step_timing(
+                    session,
+                    entry,
+                    step=step,
+                    model=grounder.model,
+                    observe_ms=observe_ms,
+                    vlm_skipped=True,
+                    skip_reason="progress_hold",
+                    via=VIA_ANDROID_RUN,
+                )
+                entry["stop"] = TERMINAL_STUCK
+                history.append(entry)
+                session.log_event(
+                    {
+                        "event": "android_run_stop",
+                        "status": TERMINAL_STUCK,
+                        "step": step,
+                        "via": "progress_hold",
+                        "progress": dict(progress),
+                    }
+                )
+                return _result(
+                    TERMINAL_STUCK,
+                    steps=step,
+                    reason="progress hold (skip unchanged BACK; Host resume)",
+                    with_continue_hint=True,
                 )
             else:
                 unchanged_streak += 1
@@ -672,54 +836,6 @@ def android_run(
         else:
             unchanged_streak = 0
             prev_screen_sig = sig
-
-        if safety.get("code") == "NEED_HUMAN" or safety.get("allow") is False:
-            _record_step_timing(
-                session,
-                entry,
-                step=step,
-                model=grounder.model,
-                observe_ms=observe_ms,
-            )
-            entry["stop"] = TERMINAL_HUMAN
-            history.append(entry)
-            session.log_event({"event": "android_run_stop", "status": TERMINAL_HUMAN, "step": step})
-            return _result(
-                TERMINAL_HUMAN,
-                steps=step,
-                reason=str(safety.get("reason") or "payment/submit UI"),
-            )
-
-        # External verifier: screen already matches → success without model terminate.
-        if success_check and not success_check.is_empty():
-            verdict = evaluate_success(
-                success_check,
-                package=last_package,
-                summary=last_summary,
-                xml=session.last_xml or "",
-            )
-            entry["success_check"] = verdict.to_dict()
-            if verdict.ok:
-                _record_step_timing(
-                    session,
-                    entry,
-                    step=step,
-                    model=grounder.model,
-                    observe_ms=observe_ms,
-                    vlm_skipped=True,
-                    skip_reason="success_check",
-                )
-                entry["stop"] = TERMINAL_OK
-                history.append(entry)
-                session.log_event(
-                    {"event": "android_run_stop", "status": TERMINAL_OK, "step": step, "via": "success_check"}
-                )
-                return _result(
-                    TERMINAL_OK,
-                    steps=step,
-                    reason="success_check satisfied",
-                    verdict=verdict.to_dict(),
-                )
 
         # Tree-first: unique find hit → tap without VLM.
         tree_hit = try_tree_shortcut(session, tree_candidates)
@@ -860,6 +976,8 @@ def android_run(
                     xml=session.last_xml or "",
                 )
                 entry["success_check"] = verdict.to_dict()
+                _merge_progress(progress_from_verdict(success_check, verdict))
+                entry["progress"] = dict(progress)
                 if not verdict.ok:
                     # Veto false success; keep looping with feedback.
                     check_feedback = "; ".join(verdict.reasons) or "success_check failed"
@@ -984,6 +1102,22 @@ def android_run(
                     steps=step,
                     reason=str(exec_result.get("reason") or code),
                 )
+            # Malformed VLM actions (e.g. click without coordinates) used to
+            # abort the whole stage as ERROR; skip and let the next observe retry.
+            if code == "UNSUPPORTED" or exec_result.get("retryable"):
+                reason = str(exec_result.get("reason") or code or "unsupported action")
+                check_feedback = f"previous action rejected: {reason}"
+                entry["action_skipped"] = True
+                entry["skip_reason"] = "unsupported_action"
+                session.log_event(
+                    {
+                        "event": "action_skipped",
+                        "step": step,
+                        "reason": reason,
+                        "code": code,
+                    }
+                )
+                continue
             return _result(
                 TERMINAL_ERROR,
                 steps=step,

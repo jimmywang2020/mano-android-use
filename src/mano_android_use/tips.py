@@ -7,7 +7,7 @@ from typing import Any
 # Short playbook echoed into MCP/CLI JSON so hosts see it without opening docs.
 PLAYBOOK_LINES: tuple[str, ...] = (
     "Default path: ready → android_run or android_run_plan (Host picks goal; mau loops). Do not chain propose_action for multi-step goals.",
-    "MCP: keep each android_run short (default max_steps=10, ~90s soft budget). On TIME_BUDGET, resume with another short android_run — omit package= (warm by default; cold_start only if context lost). Do not switch the main loop to L0/propose.",
+    "MCP: keep each android_run short (default max_steps=10, ~90s soft budget). On TIME_BUDGET/STUCK, read continue_hint/resume (ResumeSpec): fill do.* — omit package=, cold_start=false; honor dont[] (no HOME/force_stop/rewrite_goal). Do not switch the main loop to L0/propose.",
     "Goals: never include payment/submit button copy (e.g. 立即支付); stop-before-pay wording only. Meituan-class → short staged goals (搜 / 规格加购 / 凑单).",
     "Unchanged screen: mau skips VLM (recover BACK once, then STUCK). After type/click/swipe, a short act grace skips BACK. Pass tree_hints or「quoted」labels for tree-first taps before VLM.",
     "Prefer package= (warm ensure) or launch_app (cold) when the app is installed; avoid browser+中文 type.",

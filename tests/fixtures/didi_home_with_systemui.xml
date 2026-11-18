@@ -1,0 +1,15 @@
+<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
+<hierarchy rotation="0">
+  <node class="android.widget.FrameLayout" package="com.android.systemui" bounds="[0,0][1080,118]">
+    <node class="android.widget.TextView" package="com.android.systemui" text="15:07" content-desc="15:07" bounds="[100,20][200,100]"/>
+    <node class="android.widget.ImageView" package="com.android.systemui" content-desc="微博通知：" bounds="[200,20][250,100]"/>
+    <node class="android.widget.ImageView" package="com.android.systemui" content-desc="抖音通知：" bounds="[250,20][300,100]"/>
+  </node>
+  <node class="android.widget.FrameLayout" package="com.sdu.didi.psnger" bounds="[0,0][1080,2412]">
+    <node class="android.widget.TextView" package="com.sdu.didi.psnger" text="出行" clickable="true" bounds="[40,140][160,220]"/>
+    <node class="android.widget.TextView" package="com.sdu.didi.psnger" text="您想去哪里？" clickable="true" bounds="[100,1200][900,1300]"/>
+    <node class="android.widget.TextView" package="com.sdu.didi.psnger" text="输入目的地" clickable="true" bounds="[100,1320][500,1400]"/>
+    <node class="android.widget.TextView" package="com.sdu.didi.psnger" text="去：香蜜湖公园" clickable="false" bounds="[100,1500][600,1580]"/>
+    <node class="android.widget.TextView" package="com.sdu.didi.psnger" text="打车" clickable="true" bounds="[80,1800][200,1880]"/>
+  </node>
+</hierarchy>

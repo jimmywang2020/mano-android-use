@@ -125,3 +125,53 @@ uv run mau ready   # tips + observe_backend.available
 - Task L1/L2: Wall P50 ↓ ≥25% (3 runs), **or** mis-BLOCKED from goal payment words = 0 **and** non-type false BACK ↓ clearly
 - Single-step observe >60s rare; dump fail degrades or fails fast instead of eating full MCP wall
 - Channel (U2) gate: microbench p50 wall ↓ clearly vs table above on **both** a calm screen and Meituan; attempts not worse; no U2→ADB double capture on one step
+
+## Same-path A/B (ADB vs U2 observe)
+
+**Question:** On the **same** task path, does flipping only `MAU_OBSERVE_BACKEND` stably cut observe/step wall without worse outcomes?
+
+**Fixture plan:** [`docs/examples/plans/ab-meituan-guotiao-20.json`](examples/plans/ab-meituan-guotiao-20.json)  
+美团搜粿条 → 进店 → 加购约 ¥15–25 → 停在购物车/确认（不付款）。Stages A/B/C `max_steps=10` each; **tight** `success_check` (A needs `粿条`+`月售`; B `粿条`+`加入购物车`; C cart/checkout labels — not bare `配送`).
+
+**Locks:** same `MANO_DEVICE_SERIAL`, CLI `uv run mau run-plan` (not MCP soft budget), model `gui-plus-2026-02-26`, same plan JSON, force-stop Meituan (or cold stage A) before each arm. Toggle **only** `MAU_OBSERVE_BACKEND=adb|u2`.
+
+**Protocol** (or `bash scripts/ab-observe-backend.sh`):
+
+```text
+for pair in 1..3:
+  resolve-adb-serial once per pair start
+  force-stop com.sankuai.meituan
+  arm1 = adb if pair odd else u2   # odd/even swap first arm
+  MAU_OBSERVE_BACKEND=$arm1 uv run mau run-plan ... --model gui-plus-2026-02-26
+  record; force-stop again
+  MAU_OBSERVE_BACKEND=$other ...
+```
+
+Per arm record: `run_id`, wall (`time` or journal first→last `ts_ms`), `cost_report.narrative`, `by_phase.observe`, `by_backend` (must be pure — **void + rerun** if `u2_fallback_adb`), outcome (cart OK? pay UI? shop/item).
+
+**Primary KPIs:** `observe_ms` sum + share of `step_ms`; wall / `step_ms` sum.  
+**Secondary:** steps, `grounder_ms`, `GOAL_REACHED` + human-sane add-to-cart.
+
+**Pass line (suggested):** median over 3 pairs — U2 `observe_ms` ≤ ADB × 0.70 (**≥30% drop**), success rate ≥ ADB. Wall drop is bonus (VLM/act noise).
+
+**Do not:** use MCP wall as primary; change goals mid-A/B; treat a different path (e.g. burger) as this baseline.
+
+### Results table (CLI `scripts/ab-observe-backend.sh`, 2026-11-18, serial `10.10.51.111:44543`)
+
+Raw artifacts: `runs/ab-observe/20261118-141843/`. Model `gui-plus-2026-02-26`. Backends pure (no `u2_fallback_adb`).
+
+| Pair | Arm | run_id | wall_s | observe_ms | obs% | step_ms | status | outcome notes |
+|------|-----|--------|--------|------------|------|---------|--------|---------------|
+| 1 | adb | 20261118-141845-46e2ee | 169 | 79389 | 76.4 | 103896 | STUCK | A only; a11y `labels=[]`; unchanged×3 |
+| 1 | u2 | 20261118-142136-8de03a | 118 | 53982 | 40.1 | 134625 | BUDGET_EXCEEDED | A OK（潮巷粿条+月售）; B max_steps 未进菜单「加入购物车」 |
+| 2 | u2 | 20261118-142336-5fcf14 | 127 | 52712 | 32.6 | 161840 | BUDGET_EXCEEDED | A OK; B max_steps 同店列表卡住 |
+| 2 | adb | 20261118-142546-0ffe82 | 159 | 70849 | 70.6 | 100311 | STUCK | A only; `labels=[]` |
+| 3 | adb | 20261118-142827-0e062d | 151 | 67425 | 71.5 | 94287 | STUCK | A only; `labels=[]` |
+| 3 | u2 | 20261118-143100-bdfdc8 | 86 | 25279 | 30.3 | 83555 | BUDGET_EXCEEDED | A max_steps（通知抽屉干扰）; 未加购 |
+
+**Median observe_ms (adb / u2 / Δ%):** 70849 / 52712 / **−25.6%** (plan-total; below ≥30% gate)  
+**obs% median:** adb ~71.5% → u2 ~32.6%  
+**Per-observe approx:** adb ~11–13 s/obs vs u2 ~2.5–3.4 s/obs (ADB early STUCK → fewer steps; U2 ran longer paths)  
+**Full-plan success:** adb 0/3, u2 0/3 (tight checks). Stage A cleared: adb 0/3, u2 2/3.
+
+**Verdict:** On this phone, U2 **does** cut observe share and per-capture latency, and progressed further than ADB (empty-tree STUCK), but **plan-total observe_ms median drop 25.6% misses the ≥30% gate**, and neither arm finished add-to-cart under tight checks. **Do not flip default to U2 yet** for “same-path wall”; keep opt-in (`MAU_OBSERVE_BACKEND=u2`) until a run set clears stage C on both arms with ≥30% observe drop.

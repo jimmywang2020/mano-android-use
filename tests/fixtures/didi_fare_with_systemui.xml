@@ -1,0 +1,19 @@
+<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
+<hierarchy rotation="0">
+  <node class="android.widget.FrameLayout" package="com.android.systemui" bounds="[0,0][1080,118]">
+    <node class="android.widget.TextView" package="com.android.systemui" resource-id="com.android.systemui:id/clock" text="15:07" content-desc="15:07" bounds="[100,20][200,100]"/>
+    <node class="android.widget.ImageView" package="com.android.systemui" content-desc="微博通知：" bounds="[200,20][250,100]"/>
+    <node class="android.widget.ImageView" package="com.android.systemui" content-desc="哔哩哔哩通知：" bounds="[250,20][300,100]"/>
+    <node class="android.widget.ImageView" package="com.android.systemui" content-desc="抖音通知：" bounds="[300,20][350,100]"/>
+    <node class="android.widget.ImageView" package="com.android.systemui" content-desc="浏览器通知：" bounds="[350,20][400,100]"/>
+    <node class="android.widget.ImageView" package="com.android.systemui" content-desc="淘宝通知：" bounds="[400,20][450,100]"/>
+    <node class="android.widget.ImageView" package="com.android.systemui" content-desc="米家通知：" bounds="[450,20][500,100]"/>
+  </node>
+  <node class="android.widget.FrameLayout" package="com.sdu.didi.psnger" bounds="[0,0][1080,2412]">
+    <node class="android.widget.TextView" package="com.sdu.didi.psnger" text="拼车" clickable="true" bounds="[80,1400][200,1480]"/>
+    <node class="android.widget.TextView" package="com.sdu.didi.psnger" text="快车" clickable="true" bounds="[220,1400][340,1480]"/>
+    <node class="android.widget.TextView" package="com.sdu.didi.psnger" text="一口价78.9元" clickable="false" bounds="[400,1600][700,1680]"/>
+    <node class="android.widget.TextView" package="com.sdu.didi.psnger" text="价格详情" clickable="true" bounds="[720,1600][900,1680]"/>
+    <node class="android.widget.Button" package="com.sdu.didi.psnger" text="呼叫快车" clickable="true" bounds="[100,2000][980,2200]"/>
+  </node>
+</hierarchy>

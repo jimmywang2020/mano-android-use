@@ -30,42 +30,68 @@ That duplicates mau’s B-path and causes long Host round-trips / empty spinning
 
 `propose_action(execute=true)` is **deprecated** (requires `MAU_ALLOW_PROPOSE_EXECUTE=1`).
 
-### MCP soft budget (avoid Host `-32001`)
+### MCP soft budget + ResumeSpec (avoid Host `-32001`)
 
 MCP `android_run` defaults to **short** calls (`max_steps=10`, wall soft-budget ~**90s**). When the
-budget is hit, mau returns `TIME_BUDGET` with `cost_report` + `continue_hint` instead of hanging
-until the Host times out empty.
+budget is hit (or `STUCK`), mau returns `TIME_BUDGET` / `STUCK` with `cost_report` +
+`continue_hint` (alias **`resume`** — structured ResumeSpec) instead of hanging until the
+Host times out empty.
 
-- On `TIME_BUDGET` / timeout: **resume with another short `android_run`** from the current
-  screen — **omit `package=`** (warm already; avoid force-stop). Do **not** switch the main
-  loop to L0 / `propose_action`.
+**Host resume = fill the form**, do not rewrite from chat prose:
+
+1. Read `resume` / `continue_hint` **before** `cost_report.narrative`.
+2. Call `android_run` with `resume.do` fields: same `goal` (or refine only if `progress`
+   says so), **`omit package=`** (`do.omit_package=true`), `cold_start=false`, keep
+   `tree_hints` / `success_check` from `do`.
+3. Honor `dont[]`: no `HOME`, no `force_stop` / cold `launch_app`, no
+   `rewrite_goal_from_scratch`, no `propose_action` main loop.
+4. Carry `progress` / `screen_digest` in Host TaskState across MCP calls.
+
 - Very long jobs: prefer CLI `mau run` / `mau run-plan` (no MCP soft budget by default), or
   multiple short MCP stages via `android_run_plan`.
 - **Goal wording:** do not put payment/submit button copy in the goal (e.g. avoid「立即支付」);
   prefer「停在确认页 / 不要付款」. Meituan-class flows → short stages (搜 → 规格加购 → 可选凑单).
+
+### GoalCard shape (Host TaskState)
+
+Treat each task as a card mau can consume via `android_run` / `plan_json` stages:
+
+| Field | Role |
+|-------|------|
+| `intent` / `goal` | What to achieve (no payment button copy) |
+| `params` | Dest / SKU / city… |
+| `stop_when` / `success_check` | Package + labels (default scans **foreground tree**, not dirty summary alone) |
+| `forbidden` | Payment / submit / cold relaunch |
+| `hints` / `tree_hints` | Stable a11y strings for tree-shortcut |
+| `progress` | OR-merge facts from mau (`fare_seen`, `goal_matched`, …) |
+| `resume` | Last ResumeSpec — preferred next call |
+
+Example DiDi fare plan: [`examples/plans/ab-didi-xiangmihu-fare.json`](examples/plans/ab-didi-xiangmihu-fare.json);
+recipe notes: [`recipes/didi.md`](recipes/didi.md).
 
 ### Full observe + skip VLM when possible
 
 Inside `android_run` (default `stuck_same_summary=3`, override with `0` / env `MAU_STUCK_SAME_SUMMARY`):
 
 1. **Every step: one `full` observe** (`capture_mode=full`: screenshot+XML in one window) →
-   screen signature (`package` + summary, plus tree fingerprint when summary is thin).
-   Do **not** gate on tree-only then upgrade (avoids tree→full double tax on Meituan-class UIs).
-2. If signature **unchanged** vs previous step: **do not call VLM** — first time `BACK`
-   recover, then short wait, then `STUCK` + `continue_hint`. Exception: after a successful
-   `type` / `click` / `swipe`, the next few steps skip unchanged→BACK (`act_grace`; IME /
-   sheet settle).
-3. Before VLM: try **tree-first** on the same dump — `tree_hints` and/or「quoted」labels in
+   screen signature = `package` + summary + **systemui-filtered foreground tree fingerprint**
+   (so ColorOS status-bar noise cannot pin an unchanged signature).
+2. **`success_check` runs before unchanged recover** (foreground compact labels by default;
+   opt into full XML with `use_xml=true`). If matched → `GOAL_REACHED` without BACK.
+3. If signature **unchanged** vs previous step: **do not call VLM** — first time `BACK`
+   recover, then short wait, then `STUCK` + ResumeSpec. Exceptions: `act_grace` after
+   type/click/swipe; **`fare_seen` / `cart_seen` progress holds** (no suicide BACK — Host
+   gets ResumeSpec with progress).
+4. Before VLM: try **tree-first** on the same dump — `tree_hints` and/or「quoted」labels in
    the goal; unique `find` hit → tap with `via=tree_shortcut` (`grounder_ms=0`; PNG already
    paid this step, unused by Grounder).
-4. When VLM is required: reuse the step’s PNG (no second capture). `cost_report` shows
+5. When VLM is required: reuse the step’s PNG (no second capture). `cost_report` shows
    observe split (`screenshot_ms` / `xml_ms` / modes). Dump failures degrade full → `shot`
    or fail fast (`ERROR`) so one step cannot burn the whole MCP wall budget.
 
 `package=` on `android_run` is **warm** by default (no force-stop if already foreground).
 Use `cold_start=true` / CLI `--cold-start` / `launch_app` only for a true relaunch. On
 `TIME_BUDGET` resume, omit `package=` when the app is already open.
-
 Host should pass stable labels when known (e.g. `tree_hints=设置` or goal `打开「设置」`)
 and prefer short staged goals for Meituan-class flows.
 L0 MCP `observe(detail=tree|screenshot|both)` still maps to Core `tree|shot|full` for
@@ -139,6 +165,14 @@ Journal span events: `android_run_step` (main KPI), plus bypass `propose_step` /
 `android_run` internal taps do **not** emit duplicate `l0_step`.
 
 Host must report totals + which phase dominated after each run (no separate UI needed).
+
+Each MCP `android_run` / `android_run_plan` starts a **fresh `run_id`/`run_dir`**
+(`begin_run`); `cost_report` is computed from **that call’s history**, so prior tasks
+on the same long-lived session do not inflate totals. Plan stages share one run_dir
+but each stage’s `cost_report` stays stage-scoped; plan rollup sums stages.
+
+Malformed VLM actions (e.g. `click` without coordinates) are **skipped and retried**,
+not an immediate stage `ERROR`.
 
 ## success_check (prefer for “正确”)
 

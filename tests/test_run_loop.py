@@ -22,6 +22,7 @@ class _FakeSession:
         self.run_id = "test-run"
         self.run_dir = Path(run_dir) if run_dir else Path("/tmp/mau-test-run")
         self.run_dir.mkdir(parents=True, exist_ok=True)
+        self._begin_run_calls = 0
         self.last_size = (1000, 1000)
         self.last_xml = "<hierarchy/>"
         self.last_package = "app.demo"
@@ -42,6 +43,10 @@ class _FakeSession:
         self._shot = self.run_dir / "fake-shot.png"
         if not self._shot.is_file():
             self._shot.write_bytes(b"PNG")
+
+    def begin_run(self, *, runs_root=None):
+        self._begin_run_calls += 1
+        return {"run_id": self.run_id, "run_dir": str(self.run_dir)}
 
     def ensure_awake(self, *, auto_wake: bool = True):
         return {"awake": self._awake, "wakefulness": "Awake" if self._awake else "Asleep", "ok": True, "woke": False}
@@ -770,3 +775,68 @@ def test_package_defaults_to_warm_launch(monkeypatch, tmp_path: Path):
     )
     assert res2.status == TERMINAL_OK
     assert session2._launches == [{"package": "com.sankuai.meituan", "cold": True}]
+
+
+def test_click_missing_pixel_skips_not_error(monkeypatch, tmp_path: Path):
+    session = _FakeSession(run_dir=tmp_path)
+    n = {"i": 0}
+
+    class _G:
+        model = "fake"
+
+        def propose(self, image, instruction):
+            from mano_android_use.grounder import GrounderResult
+
+            n["i"] += 1
+            if n["i"] == 1:
+                # Malformed: click with no coordinate (airport A ERROR case).
+                return GrounderResult(True, "fake", {"action": "click"}, "{}")
+            return GrounderResult(
+                True, "fake", {"action": "terminate", "status": "success"}, "{}"
+            )
+
+    monkeypatch.setattr("mano_android_use.run_loop.Grounder", lambda model=None: _G())
+    res = android_run(session, "recover after bad click", max_steps=5, stuck_same_summary=0)
+    assert res.status == TERMINAL_OK
+    assert any(h.get("action_skipped") for h in res.history)
+    assert session._begin_run_calls == 1
+
+
+def test_cost_report_scoped_to_history_not_prior_journal(monkeypatch, tmp_path: Path):
+    session = _FakeSession(run_dir=tmp_path)
+    # Poison journal with a prior span that must not enter this call's cost_report.
+    session.log_event(
+        {
+            "event": EVENT_STEP,
+            "step": 99,
+            "observe_ms": 9999,
+            "grounder_ms": 8888,
+            "act_ms": 7777,
+            "step_ms": 26664,
+            "prompt_tokens": 5000,
+            "completion_tokens": 500,
+            "action": "click",
+            "via": "android_run",
+        }
+    )
+
+    class _G:
+        model = "fake"
+
+        def propose(self, image, instruction):
+            from mano_android_use.grounder import GrounderResult
+
+            return GrounderResult(
+                True,
+                "fake",
+                {"action": "terminate", "status": "success"},
+                "{}",
+                prompt_tokens=12,
+                completion_tokens=3,
+            )
+
+    monkeypatch.setattr("mano_android_use.run_loop.Grounder", lambda model=None: _G())
+    res = android_run(session, "scoped cost", max_steps=3, stuck_same_summary=0)
+    assert res.status == TERMINAL_OK
+    assert res.cost_report["prompt_tokens"] == 12
+    assert res.cost_report["total_ms"] < 5000

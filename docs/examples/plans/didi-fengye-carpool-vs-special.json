@@ -1,0 +1,45 @@
+{
+  "id": "didi-fengye-carpool-vs-special",
+  "description": "DiDi: set dest 枫叶健身, stop on fare sheet, report 拼车 vs 特价/特惠(不拼车) prices. No call/pay. Checks tightened vs 香蜜湖 false-complete.",
+  "goal_card": {
+    "intent": "分别查看拼车与特价车预估价",
+    "params": {"dest": "枫叶健身"},
+    "package": "com.sdu.didi.psnger",
+    "forbidden": ["呼叫", "确认叫车", "支付", "HOME", "force_stop"],
+    "stop_when": ["一口价", "拼成", "特惠", "惊喜特价"]
+  },
+  "stages": [
+    {
+      "id": "A_open_didi",
+      "package": "com.sdu.didi.psnger",
+      "max_steps": 10,
+      "tree_hints": ["关闭弹窗", "您想去哪里", "打车"],
+      "goal": "打开滴滴出行，若有广告/权限弹窗先关掉，进入可打车首页。不要叫车、不要支付。",
+      "success_check": {
+        "package": "com.sdu.didi.psnger",
+        "labels_any": ["您想去哪里", "上车点", "确认上车点"]
+      }
+    },
+    {
+      "id": "B_set_dest_fengye",
+      "max_steps": 12,
+      "tree_hints": ["您想去哪里", "输入目的地", "枫叶健身"],
+      "goal": "把目的地设为「枫叶健身」（选中具体地点，不要停在空的「请输入终点」推荐列表）。进入车型/预估价页或首页出现「去：枫叶健身」芯片即可。不要点呼叫、不要支付。",
+      "success_check": {
+        "package": "com.sdu.didi.psnger",
+        "labels_any": ["去：枫叶", "选路线", "一口价", "特价拼车", "特惠快车", "惊喜特价", "未拼成"]
+      }
+    },
+    {
+      "id": "C_read_carpool_and_special",
+      "max_steps": 12,
+      "tree_hints": ["特价拼车", "极速拼车", "惊喜特价", "特惠快车", "一口价"],
+      "goal": "停在报价/车型列表，分别读出：1) 拼车相关价格（特价拼车/极速拼车的未拼成或拼成价）；2) 不拼车的特价/特惠类价格（惊喜特价或特惠快车的一口价）。不要点呼叫、确认叫车或支付。",
+      "success_check": {
+        "package": "com.sdu.didi.psnger",
+        "labels_any": ["一口价", "拼成", "特价拼车", "惊喜特价", "特惠快车"],
+        "use_foreground_tree": true
+      }
+    }
+  ]
+}

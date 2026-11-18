@@ -1,0 +1,37 @@
+{
+  "id": "ab-meituan-guotiao-20",
+  "description": "Same-path A/B fixture: Meituan guotiao ~¥15-25 add-to-cart, stop before pay. Tight success_check — do not use loose labels like bare 配送.",
+  "stages": [
+    {
+      "id": "A_search_list",
+      "package": "com.sankuai.meituan",
+      "max_steps": 10,
+      "tree_hints": ["外卖", "搜索"],
+      "goal": "打开美团外卖，关闭弹窗，搜索「粿条」并进入商家/菜品结果列表（须能看到月售）。不要支付。",
+      "success_check": {
+        "package": "com.sankuai.meituan",
+        "labels_all": ["粿条", "月售"]
+      }
+    },
+    {
+      "id": "B_shop_menu",
+      "max_steps": 10,
+      "tree_hints": ["粿条"],
+      "goal": "从结果进入一家售卖粿条的商家菜单页，能看到粿条类菜品和「加入购物车」。不要支付。",
+      "success_check": {
+        "package": "com.sankuai.meituan",
+        "labels_all": ["粿条", "加入购物车"]
+      }
+    },
+    {
+      "id": "C_add_cart",
+      "max_steps": 10,
+      "tree_hints": ["加入购物车"],
+      "goal": "选一份单价约15-25元的粿条（目标约20元），点「加入购物车」完成加购；停在购物车或确认页，不要付款。",
+      "success_check": {
+        "package": "com.sankuai.meituan",
+        "labels_any": ["到手约", "去结算", "结算", "购物车"]
+      }
+    }
+  ]
+}

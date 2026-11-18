@@ -1,0 +1,45 @@
+{
+  "id": "ab-didi-xiangmihu-fare",
+  "description": "GoalCard-shaped DiDi fare plan: stop before call/pay. success_check uses foreground tree by default (systemui filtered). Same plan for adb vs u2 arms.",
+  "goal_card": {
+    "intent": "查打车预估价",
+    "params": {"dest": "香蜜湖", "city": "深圳"},
+    "package": "com.sdu.didi.psnger",
+    "forbidden": ["呼叫", "确认叫车", "支付", "HOME", "force_stop"],
+    "stop_when": ["一口价", "元", "价格详情", "预估"]
+  },
+  "stages": [
+    {
+      "id": "A_open_didi",
+      "package": "com.sdu.didi.psnger",
+      "max_steps": 10,
+      "tree_hints": ["出行", "车", "滴滴"],
+      "goal": "打开滴滴出行，关闭广告/权限弹窗，进入可打车的首页或出行页。不要叫车、不要支付。",
+      "success_check": {
+        "package": "com.sdu.didi.psnger",
+        "labels_any": ["上车点", "你要去哪", "确认上车点", "目的地", "打车", "您想去哪里"]
+      }
+    },
+    {
+      "id": "B_set_dest",
+      "max_steps": 10,
+      "tree_hints": ["你要去哪", "目的地", "搜索", "您想去哪里"],
+      "goal": "设置目的地为「香蜜湖」（深圳香蜜湖即可），进入路线或车型/预估价相关页。不要点呼叫、不要支付。",
+      "success_check": {
+        "package": "com.sdu.didi.psnger",
+        "labels_any": ["香蜜湖", "预估", "车型", "特惠快车", "快车", "拼车", "一口价"]
+      }
+    },
+    {
+      "id": "C_read_fare",
+      "max_steps": 10,
+      "tree_hints": ["预估", "元", "一口价", "价格详情"],
+      "goal": "读出打车到香蜜湖的预估价格（任意可见车型即可），停在报价/车型列表。不要点呼叫、确认叫车或支付。",
+      "success_check": {
+        "package": "com.sdu.didi.psnger",
+        "labels_any": ["一口价", "元", "预估", "优惠后", "价格详情"],
+        "use_foreground_tree": true
+      }
+    }
+  ]
+}

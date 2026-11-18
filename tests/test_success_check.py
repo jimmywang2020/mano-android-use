@@ -1,7 +1,9 @@
 from pathlib import Path
 
-from mano_android_use.run_loop import TERMINAL_OK, TERMINAL_STUCK, android_run
+from mano_android_use.run_loop import TERMINAL_OK, TERMINAL_STUCK, android_run, continue_hint_for_run
 from mano_android_use.success_check import SuccessCheck, evaluate_success
+
+FIXTURES = Path(__file__).parent / "fixtures"
 
 
 def test_evaluate_package_and_labels():
@@ -24,33 +26,77 @@ def test_evaluate_package_and_labels():
 
 
 def test_summary_only_ignores_buried_xml_city():
-    """Home feed XML may mention 北京; default check must not use full XML."""
+    """Opt out of foreground tree: buried XML city must not trigger."""
     v = evaluate_success(
         SuccessCheck(
             package="ctrip.android.view",
             labels_all=["北京"],
             labels_any=["酒店"],
+            use_foreground_tree=False,
         ),
         package="ctrip.android.view",
         summary="package=ctrip.android.view; labels=[会员, 酒店, 攻略]",
-        xml='<node text="北京精品游"/>',
+        xml='<hierarchy><node package="ctrip.android.view" text="北京精品游"/></hierarchy>',
     )
     assert not v.ok
 
 
-def test_summary_only_ignores_buried_xml_city():
-    """Home feed XML may mention 北京; default check must not use full XML."""
+def test_didi_fare_check_despite_dirty_summary():
+    """U2/ColorOS: systemui-filled summary still finds 一口价 via foreground tree."""
+    xml = (FIXTURES / "didi_fare_with_systemui.xml").read_text(encoding="utf-8")
+    dirty = "package=com.sdu.didi.psnger; labels=[15:07, 微博通知：, 哔哩哔哩通知：, 抖音通知：]"
     v = evaluate_success(
         SuccessCheck(
-            package="ctrip.android.view",
-            labels_all=["北京"],
-            labels_any=["酒店"],
+            package="com.sdu.didi.psnger",
+            labels_any=["一口价", "元", "价格详情"],
         ),
-        package="ctrip.android.view",
-        summary="package=ctrip.android.view; labels=[会员, 酒店, 攻略]",
-        xml='<node text="北京精品游"/>',
+        package="com.sdu.didi.psnger",
+        summary=dirty,
+        xml=xml,
     )
-    assert not v.ok
+    assert v.ok
+    assert v.matched
+
+    home = (FIXTURES / "didi_home_with_systemui.xml").read_text(encoding="utf-8")
+    home_v = evaluate_success(
+        SuccessCheck(
+            package="com.sdu.didi.psnger",
+            labels_any=["一口价", "价格详情"],
+        ),
+        package="com.sdu.didi.psnger",
+        summary=dirty,
+        xml=home,
+    )
+    assert not home_v.ok
+
+
+def test_use_xml_still_available():
+    v = evaluate_success(
+        SuccessCheck(labels_any=["埋藏价"], use_xml=True, use_foreground_tree=False),
+        package="x",
+        summary="labels=[]",
+        xml='<node text="埋藏价99"/>',
+    )
+    assert v.ok
+
+
+def test_resume_spec_shape():
+    hint = continue_hint_for_run(
+        goal="查价",
+        package="com.sdu.didi.psnger",
+        last_summary="labels=[一口价]",
+        status="TIME_BUDGET",
+        progress={"fare_seen": True},
+        screen_digest={"labels": ["一口价78.9元"]},
+        tree_hints=["拼车"],
+        success_check={"package": "com.sdu.didi.psnger", "labels_any": ["一口价"]},
+    )
+    assert hint["next_actor"] == "host"
+    assert hint["do"]["omit_package"] is True
+    assert hint["do"]["cold_start"] is False
+    assert "HOME" in hint["dont"]
+    assert hint["progress"]["fare_seen"] is True
+    assert hint["action"] == "android_run"  # legacy
 
 
 def test_early_stop_on_success_check(monkeypatch):
@@ -111,6 +157,7 @@ def test_early_stop_on_success_check(monkeypatch):
     assert res.status == TERMINAL_OK
     assert res.reason == "success_check satisfied"
     assert called["n"] == 0
+    assert res.progress and res.progress.get("goal_matched")
 
 
 def test_terminate_vetoed_then_stuck(monkeypatch, tmp_path: Path):

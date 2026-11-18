@@ -9,6 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from .tree import screen_digest_labels
+
 
 @dataclass
 class SuccessCheck:
@@ -17,14 +19,18 @@ class SuccessCheck:
     - ``package``: foreground package must equal this (exact).
     - ``labels_any``: at least one substring must appear in the search blob.
     - ``labels_all``: every substring must appear.
-    - ``use_xml``: if True, also search full accessibility XML (noisy; default
-      False — summary only, to avoid false hits from off-screen / buried nodes).
+    - ``use_xml``: if True, search full accessibility XML (noisy; can false-hit
+      buried promo nodes).
+    - ``use_foreground_tree``: if True (default), also search systemui-filtered
+      compact labels from XML so ColorOS status-bar noise cannot hide real UI.
+      Ignored when ``use_xml`` is True (full XML already covers it).
     """
 
     package: str | None = None
     labels_any: list[str] = field(default_factory=list)
     labels_all: list[str] = field(default_factory=list)
     use_xml: bool = False
+    use_foreground_tree: bool = True
 
     def is_empty(self) -> bool:
         return not self.package and not self.labels_any and not self.labels_all
@@ -39,6 +45,8 @@ class SuccessCheck:
             out["labels_all"] = list(self.labels_all)
         if self.use_xml:
             out["use_xml"] = True
+        if not self.use_foreground_tree:
+            out["use_foreground_tree"] = False
         return out
 
     @classmethod
@@ -52,11 +60,13 @@ class SuccessCheck:
             labels_any = [p.strip() for p in labels_any.split(",") if p.strip()]
         if isinstance(labels_all, str):
             labels_all = [p.strip() for p in labels_all.split(",") if p.strip()]
+        use_fg = raw.get("use_foreground_tree")
         check = cls(
             package=str(package).strip() if package else None,
             labels_any=[str(x) for x in labels_any if str(x).strip()],
             labels_all=[str(x) for x in labels_all if str(x).strip()],
             use_xml=bool(raw.get("use_xml")),
+            use_foreground_tree=True if use_fg is None else bool(use_fg),
         )
         return None if check.is_empty() else check
 
@@ -65,9 +75,31 @@ class SuccessCheck:
 class SuccessVerdict:
     ok: bool
     reasons: list[str] = field(default_factory=list)
+    matched: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
-        return {"ok": self.ok, "reasons": self.reasons}
+        out: dict[str, Any] = {"ok": self.ok, "reasons": self.reasons}
+        if self.matched:
+            out["matched"] = list(self.matched)
+        return out
+
+
+def _search_blob(
+    check: SuccessCheck,
+    *,
+    package: str,
+    summary: str,
+    xml: str,
+) -> str:
+    blob = summary or ""
+    if check.use_xml and xml:
+        return f"{blob}\n{xml}"
+    if check.use_foreground_tree and xml:
+        fg = (package or check.package or "").strip() or None
+        labels = screen_digest_labels(xml, package=fg, max_labels=40, max_nodes=160)
+        if labels:
+            blob = f"{blob}\n" + " ".join(labels)
+    return blob
 
 
 def evaluate_success(
@@ -81,16 +113,11 @@ def evaluate_success(
     if check is None or check.is_empty():
         return SuccessVerdict(True, [])
 
-    # Default: compact summary only (tree summarize labels). Full XML often
-    # contains city names in buried/recommended nodes and false-triggers checks.
-    blob = summary or ""
-    if check.use_xml and xml:
-        blob = f"{blob}\n{xml}"
+    blob = _search_blob(check, package=package, summary=summary, xml=xml)
     reasons: list[str] = []
+    matched: list[str] = []
 
     def _present(needle: str) -> bool:
-        # Summary-only by default. Do not scan full XML for ¥ — query pages often
-        # bury promotional prices and false-trigger stage C.
         return needle in blob
 
     if check.package:
@@ -102,12 +129,38 @@ def evaluate_success(
     for needle in check.labels_all:
         if not _present(needle):
             reasons.append(f"labels_all missing {needle!r}")
+        else:
+            matched.append(needle)
 
     if check.labels_any:
-        if not any(_present(n) for n in check.labels_any):
+        hit = next((n for n in check.labels_any if _present(n)), None)
+        if hit is None:
             reasons.append(
                 "labels_any none of "
                 + ",".join(repr(n) for n in check.labels_any)
             )
+        else:
+            matched.append(hit)
 
-    return SuccessVerdict(ok=not reasons, reasons=reasons)
+    return SuccessVerdict(ok=not reasons, reasons=reasons, matched=matched)
+
+
+def progress_from_verdict(
+    check: SuccessCheck | None,
+    verdict: SuccessVerdict | None,
+) -> dict[str, Any]:
+    """Merge-OR progress bits from a successful (or partial) check."""
+    out: dict[str, Any] = {}
+    if not check or check.is_empty() or not verdict:
+        return out
+    if verdict.ok:
+        out["goal_matched"] = True
+    for lab in verdict.matched or []:
+        key = f"saw:{lab}"
+        out[key] = True
+        # Common task bits for Host TaskState
+        if lab in {"元", "一口价", "预估", "到手约"} or "元" in lab or "一口价" in lab:
+            out["fare_seen"] = True
+        if lab in {"加入购物车", "去结算", "结算", "购物车"}:
+            out["cart_seen"] = True
+    return out

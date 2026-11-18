@@ -79,3 +79,13 @@ def test_apply_unsupported():
     out = apply_action(s, {"action": "fly"}, {}, via=VIA_ANDROID_RUN)
     assert out["ok"] is False
     assert out["code"] == "UNSUPPORTED"
+    assert out.get("retryable") is True
+
+
+def test_apply_click_missing_pixel_is_retryable():
+    s = _Sess()
+    out = apply_action(s, {"action": "click"}, {}, via=VIA_ANDROID_RUN)
+    assert out["ok"] is False
+    assert out["code"] == "UNSUPPORTED"
+    assert "missing_pixel" in out["reason"]
+    assert out.get("retryable") is True

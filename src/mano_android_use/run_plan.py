@@ -184,6 +184,10 @@ def android_run_plan(
             reason="empty stages",
         )
 
+    # One fresh run_dir for the whole plan; stage costs stay history-scoped.
+    if hasattr(session, "begin_run"):
+        session.begin_run()
+
     state = PlanState()
     stage_rows: list[dict[str, Any]] = []
 
@@ -200,6 +204,7 @@ def android_run_plan(
             goal_context=ctx,
             wall_budget_ms=wall_budget_ms,
             tree_hints=list(stage.tree_hints or []),
+            new_run=False,
         )
         row = {
             "id": stage.id,

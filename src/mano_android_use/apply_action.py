@@ -45,10 +45,26 @@ def apply_action(
     kind, action = normalize_kind(action)
     hint = sanitize_semantic_hint(semantic_hint or "")
 
-    if kind == "click" and "pixel" in mapped:
+    if kind == "click":
+        if "pixel" not in mapped:
+            return {
+                "ok": False,
+                "code": "UNSUPPORTED",
+                "reason": "kind=click missing_pixel",
+                "retryable": True,
+                "via": via,
+            }
         x, y = mapped["pixel"]
         return session.tap(int(x), int(y), semantic_hint=hint, via=via)
-    if kind == "swipe" and "pixel" in mapped and "pixel2" in mapped:
+    if kind == "swipe":
+        if "pixel" not in mapped or "pixel2" not in mapped:
+            return {
+                "ok": False,
+                "code": "UNSUPPORTED",
+                "reason": "kind=swipe missing_pixel",
+                "retryable": True,
+                "via": via,
+            }
         x1, y1 = mapped["pixel"]
         x2, y2 = mapped["pixel2"]
         return session.swipe(
@@ -74,4 +90,10 @@ def apply_action(
             "status": action.get("status"),
             "via": via,
         }
-    return {"ok": False, "code": "UNSUPPORTED", "reason": f"kind={kind}", "via": via}
+    return {
+        "ok": False,
+        "code": "UNSUPPORTED",
+        "reason": f"kind={kind}",
+        "retryable": True,
+        "via": via,
+    }
