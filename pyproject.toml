@@ -16,7 +16,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "pillow>=10"]
+u2 = ["uiautomator2>=3.2"]
 
 [project.scripts]
 mau = "mano_android_use.cli:main"

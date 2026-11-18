@@ -71,6 +71,13 @@ def _merge_observe_breakdown(
         bd.get("capture_attempt") or 0
     )
     out["final_mode"] = mode or str(out.get("final_mode") or "")
+    backend = str(obs.get("observe_backend") or bd.get("observe_backend") or "")
+    if backend:
+        out["observe_backend"] = backend
+        out["final_backend"] = backend
+        backends = list(out.get("backends") or [])
+        backends.append(backend)
+        out["backends"] = backends
     return out
 
 

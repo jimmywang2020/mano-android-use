@@ -70,6 +70,14 @@ Host should pass stable labels when known (e.g. `tree_hints=设置` or goal `打
 and prefer short staged goals for Meituan-class flows.
 L0 MCP `observe(detail=tree|screenshot|both)` still maps to Core `tree|shot|full` for
 manual/debug; `android_run` always uses `full`.
+
+### Optional U2 observe (faster capture)
+
+- Install: `uv sync --extra u2` (does **not** change default MCP deps).
+- Enable: `MAU_OBSERVE_BACKEND=u2` (unset / `adb` = stock ADB `screencap`+`dump`).
+- On U2 failure: same step falls back to ADB; journal `observe_backend=u2_fallback_adb`.
+- Tap/type/swipe stay on ADB. See [`docs/eval-latency.md`](eval-latency.md) microbench gate.
+
 Acceptance checklist: [`docs/eval-vision-gating.md`](eval-vision-gating.md).
 
 ## Open an app

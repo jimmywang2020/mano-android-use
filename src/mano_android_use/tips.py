@@ -15,6 +15,7 @@ PLAYBOOK_LINES: tuple[str, ...] = (
     "APK install / ColorOS「继续安装」dialogs: use observe+tap or a human — not android_run.",
     "Keep the screen awake and unlocked; wireless ADB ports change — refresh MANO_DEVICE_SERIAL.",
     "NEED_HUMAN / BLOCKED_BY_POLICY on payment UI is expected; do not force taps.",
+    "Optional faster observe: uv sync --extra u2 and MAU_OBSERVE_BACKEND=u2 (ADB fallback if agent down). Default remains ADB.",
 )
 
 
@@ -22,6 +23,7 @@ def build_tips(
     *,
     screen: dict[str, Any] | None = None,
     text_backend: dict[str, Any] | None = None,
+    observe_backend: dict[str, Any] | None = None,
     include_playbook: bool = True,
 ) -> list[str]:
     tips: list[str] = []
@@ -38,6 +40,17 @@ def build_tips(
             0,
             "Unicode IME unavailable — launch/tap/swipe OK; Chinese type_text will fail "
             "until OpenATX AdbKeyboard (com.github.uiautomator/.AdbKeyboard) is installed.",
+        )
+    if (
+        observe_backend is not None
+        and observe_backend.get("requested") == "u2"
+        and observe_backend.get("available") is False
+    ):
+        reason = str(observe_backend.get("reason") or "U2 unavailable")
+        tips.insert(
+            0,
+            f"MAU_OBSERVE_BACKEND=u2 but agent unavailable ({reason[:160]}). "
+            "observe will fall back to ADB until uiautomator2/atx-agent is healthy.",
         )
     # Dedupe preserving order
     seen: set[str] = set()

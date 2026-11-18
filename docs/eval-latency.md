@@ -86,7 +86,22 @@ Raw JSON: `/tmp/mau-p2-u2-vs-adb.json` (local). Method: N=8 after warm; ADB = ma
 
 **Gate:** U2 wall p50 is ~**7×** (Settings) / ~**4.6×** (Meituan) faster than same-day ADB full observe; attempts not worse; spike path did not chain U2→ADB on one step.
 
-**Verdict:** microbench **passes** → worth a separate mau/mano item for optional U2 backend + ADB fallback. Not yet productized (venv-only `uiautomator2`, no `DeviceBackend` wiring).
+**Verdict:** microbench **passes** → optional U2 observe backend is wired in mau (see below).
+
+### Optional U2 observe backend (productized in mau)
+
+Default remains ADB. To use U2:
+
+```bash
+uv sync --extra u2 --extra dev
+export MAU_OBSERVE_BACKEND=u2
+eval "$(bash scripts/resolve-adb-serial.sh)"
+uv run mau ready   # tips + observe_backend.available
+```
+
+- Journal / payload: `observe_backend=u2` or `u2_fallback_adb` (never silent).
+- Act path stays ADB + safety.
+- Microbench with env on should beat the ADB rows above on the same phone; `cost_report` may list `backends u2×N`.
 
 ## Cases (task-level)
 

@@ -66,6 +66,11 @@ def build_step_span(
         )
         if final_mode:
             out["observe_mode"] = str(final_mode)
+        backend = observe_breakdown.get("observe_backend") or observe_breakdown.get(
+            "final_backend"
+        )
+        if backend:
+            out["observe_backend"] = str(backend)
     return out
 
 
@@ -137,6 +142,7 @@ def aggregate_totals(steps: list[dict[str, Any]]) -> dict[str, Any]:
         "observe_xml_ms": 0,
         "by_via": {},
         "by_observe_mode": {},
+        "by_observe_backend": {},
     }
     for row in steps:
         for key in _MS_KEYS:
@@ -157,6 +163,11 @@ def aggregate_totals(steps: list[dict[str, Any]]) -> dict[str, Any]:
         elif row.get("observe_mode"):
             key = str(row.get("observe_mode"))
             totals["by_observe_mode"][key] = int(totals["by_observe_mode"].get(key) or 0) + 1
+        backend = str(row.get("observe_backend") or "").strip()
+        if backend:
+            totals["by_observe_backend"][backend] = (
+                int(totals["by_observe_backend"].get(backend) or 0) + 1
+            )
         bucket = _via_bucket(row)
         slot = totals["by_via"].setdefault(
             bucket,
@@ -350,10 +361,11 @@ def cost_report_from_doc(doc: dict[str, Any]) -> dict[str, Any]:
         "observe": {
             "ms": obs,
             "pct": _pct(obs, total),
-            "what": "ADB capture (android_run: full every step; L0 may use tree/shot)",
+            "what": "Device capture (android_run: full every step; backend adb|u2)",
             "screenshot_ms": shot_ms,
             "xml_ms": xml_ms,
             "by_mode": dict(by_mode) if by_mode else {},
+            "by_backend": dict(totals.get("by_observe_backend") or {}),
         },
         "grounder": {
             "ms": vlm,
@@ -407,11 +419,17 @@ def cost_report_from_doc(doc: dict[str, Any]) -> dict[str, Any]:
         narrative += f" VLM skipped on {vlm_skipped} step(s)."
     if bypass_ms > 0:
         narrative += f" Includes bypass via propose/L0/tree/recover: {_fmt_ms(bypass_ms)}."
-    if shot_ms or xml_ms or by_mode:
+    by_backend = totals.get("by_observe_backend") if isinstance(totals.get("by_observe_backend"), dict) else {}
+    if shot_ms or xml_ms or by_mode or by_backend:
         mode_bits = ",".join(f"{k}×{v}" for k, v in sorted(by_mode.items())) if by_mode else ""
+        backend_bits = (
+            ",".join(f"{k}×{v}" for k, v in sorted(by_backend.items())) if by_backend else ""
+        )
         narrative += (
             f" Observe split: screenshot {_fmt_ms(shot_ms)}, xml {_fmt_ms(xml_ms)}"
-            + (f" (modes {mode_bits})." if mode_bits else ".")
+            + (f" (modes {mode_bits})" if mode_bits else "")
+            + (f" (backends {backend_bits})" if backend_bits else "")
+            + "."
         )
     return {
         "total_ms": total,

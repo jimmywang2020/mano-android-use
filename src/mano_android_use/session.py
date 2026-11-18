@@ -18,6 +18,12 @@ from mano.text_input import OpenAtxAdbKeyboardBackend
 
 from .apply_action import VIA_L0_DIRECT
 from .display import ensure_awake, screen_state
+from .observe_backend import (
+    ENV_OBSERVE_BACKEND,
+    U2ObserveBackend,
+    probe_u2,
+    resolve_backend,
+)
 from .safety import SafetyDecision, SafetyGateway
 from .tips import build_tips
 from .trace_report import EVENT_L0_STEP, build_step_span
@@ -40,6 +46,7 @@ class DeviceSession:
     last_package: str = ""
     last_size: tuple[int, int] = (0, 0)
     _journal: list[dict[str, Any]] = field(default_factory=list)
+    _u2: U2ObserveBackend | None = field(default=None, repr=False)
 
     @classmethod
     def open(
@@ -122,14 +129,24 @@ class DeviceSession:
                 }
         except Exception as exc:  # noqa: BLE001
             info["text_backend"] = {"available": False, "reason": str(exc)[:300]}
+        requested = resolve_backend()
+        info["observe_backend"] = {"requested": requested, "available": True, "reason": ""}
+        if requested == "u2":
+            info["observe_backend"] = probe_u2(self.serial)
         info["tips"] = build_tips(
             screen=info.get("screen"),
             text_backend=info.get("text_backend"),
+            observe_backend=info.get("observe_backend"),
             include_playbook=True,
         )
         # Device reachable counts as ready; IME/screen issues are tips, not hard fail.
         info["ready"] = True
         return info
+
+    def _u2_backend(self) -> U2ObserveBackend:
+        if self._u2 is None:
+            self._u2 = U2ObserveBackend(self.serial)
+        return self._u2
 
     def _capture_frame(self, adb: Adb, path: Path) -> tuple[int, int]:
         return adb.screenshot(path)
@@ -167,8 +184,11 @@ class DeviceSession:
         elif self.step <= 0:
             self.step = 1
         fallback = self.last_size if self.last_size[0] > 0 and self.last_size[1] > 0 else None
+        requested = resolve_backend()
+        observe_backend = "adb"
+        u2_error = ""
 
-        def _capture(m: str):
+        def _capture_adb(m: str):
             return capture_observation(
                 self.adb,
                 self.run_dir,
@@ -179,48 +199,76 @@ class DeviceSession:
             )
 
         degrade_from = ""
-        try:
-            obs = _capture(mode)
-        except Exception as exc:  # noqa: BLE001 — dump spikes / OOM must fail fast or degrade
-            err = str(exc)[:300]
-            code = str(getattr(exc, "code", "") or "")
-            # tree dump failed → shot (skip gate); full dump failed → shot then re-raise.
-            if mode == "tree":
-                degrade_from = "tree"
+        obs: Any = None
+        if requested == "u2":
+            try:
+                obs = self._u2_backend().capture(
+                    self.run_dir,
+                    self.step,
+                    mode=mode,  # type: ignore[arg-type]
+                    fallback_size=fallback,
+                )
+                observe_backend = "u2"
+            except Exception as exc:  # noqa: BLE001 — always allow ADB fallback
+                u2_error = str(exc)[:300]
+                self._u2 = None
                 self._log(
                     {
-                        "event": "observe_degrade",
-                        "from_mode": "tree",
-                        "to_mode": "shot",
-                        "error": err,
-                        "code": code,
+                        "event": "observe_backend_fallback",
+                        "from_backend": "u2",
+                        "to_backend": "adb",
+                        "error": u2_error,
+                        "env": ENV_OBSERVE_BACKEND,
                     }
                 )
-                try:
-                    obs = _capture("shot")
-                except Exception as exc2:  # noqa: BLE001
-                    raise ManoError(
-                        f"observe dump failed (tree→shot): {exc2}"
-                    ) from exc2
-            elif mode == "full":
-                degrade_from = "full"
-                self._log(
-                    {
-                        "event": "observe_degrade",
-                        "from_mode": "full",
-                        "to_mode": "shot",
-                        "error": err,
-                        "code": code,
-                    }
-                )
-                try:
-                    obs = _capture("shot")
-                except Exception as exc2:  # noqa: BLE001
-                    raise ManoError(
-                        f"observe dump failed (full→shot): {exc2}"
-                    ) from exc2
-            else:
-                raise ManoError(f"observe failed ({mode}): {err}") from exc
+                observe_backend = "u2_fallback_adb"
+
+        if obs is None:
+            try:
+                obs = _capture_adb(mode)
+            except Exception as exc:  # noqa: BLE001 — dump spikes / OOM must fail fast or degrade
+                err = str(exc)[:300]
+                code = str(getattr(exc, "code", "") or "")
+                # tree dump failed → shot (skip gate); full dump failed → shot then re-raise.
+                if mode == "tree":
+                    degrade_from = "tree"
+                    self._log(
+                        {
+                            "event": "observe_degrade",
+                            "from_mode": "tree",
+                            "to_mode": "shot",
+                            "error": err,
+                            "code": code,
+                        }
+                    )
+                    try:
+                        obs = _capture_adb("shot")
+                    except Exception as exc2:  # noqa: BLE001
+                        raise ManoError(
+                            f"observe dump failed (tree→shot): {exc2}"
+                        ) from exc2
+                elif mode == "full":
+                    degrade_from = "full"
+                    self._log(
+                        {
+                            "event": "observe_degrade",
+                            "from_mode": "full",
+                            "to_mode": "shot",
+                            "error": err,
+                            "code": code,
+                        }
+                    )
+                    try:
+                        obs = _capture_adb("shot")
+                    except Exception as exc2:  # noqa: BLE001
+                        raise ManoError(
+                            f"observe dump failed (full→shot): {exc2}"
+                        ) from exc2
+                else:
+                    raise ManoError(f"observe failed ({mode}): {err}") from exc
+            if observe_backend != "u2_fallback_adb":
+                observe_backend = "adb"
+
         # Partial modes must not wipe the other modality's last_* cache.
         if obs.xml:
             self.last_xml = obs.xml
@@ -247,9 +295,12 @@ class DeviceSession:
             "capture_attempt": int(obs.capture_attempt),
             "screenshot_skipped": bool(obs.screenshot_skipped),
             "xml_skipped": bool(obs.xml_skipped),
+            "observe_backend": observe_backend,
         }
         if degrade_from:
             breakdown["degraded_from"] = degrade_from
+        if u2_error:
+            breakdown["u2_error"] = u2_error
         payload: dict[str, Any] = {
             "step": self.step,
             "observation_id": obs.observation_id,
@@ -262,6 +313,7 @@ class DeviceSession:
             "screenshot_path": shot_path,
             "xml_path": xml_path,
             "capture_mode": obs.capture_mode,
+            "observe_backend": observe_backend,
             "observe_breakdown": breakdown,
         }
         if detail in {"screenshot", "both"} or mode in {"shot", "full"}:
