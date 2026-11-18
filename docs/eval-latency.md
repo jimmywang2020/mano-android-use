@@ -71,6 +71,23 @@ PY
 
 Takeaway: on Meituan-class UI the dominant cost is often **stability retries (attempt=3)**, not a single dump. Any U2/ATX spike must beat this table on the **same serial/screen** (p50 wall and attempts), without paying ADB again on the same step.
 
+### P2 spike: U2 vs ADB (same serial, 2026-11-18)
+
+Raw JSON: `/tmp/mau-p2-u2-vs-adb.json` (local). Method: N=8 after warm; ADB = mau `observe(detail=both)`; U2 = `screenshot()` + `dump_hierarchy()` (no mau skew loop).
+
+| Screen | Backend | wall p50 | shot p50 | xml p50 | attempts |
+|--------|---------|----------|----------|---------|----------|
+| Settings | ADB | ~6.5 s | ~0.92 s | (breakdown 0 this run*) | 1 |
+| Settings | **U2** | **~0.87 s** | ~0.36 s | ~0.50 s | 1 |
+| Meituan home | ADB | ~8.1 s | ~1.9 s | (breakdown 0 this run*) | 1 |
+| Meituan home | **U2** | **~1.76 s** | ~0.45 s | ~1.31 s | 1 |
+
+\*ADB `xml_ms` in Core breakdown was 0 in this session while wall still included dump work — trust **wall p50** for the A/B. Earlier P1 Meituan run had wall ~21 s with `capture_attempt=3`; this P2 ADB Meituan was calmer (attempt=1).
+
+**Gate:** U2 wall p50 is ~**7×** (Settings) / ~**4.6×** (Meituan) faster than same-day ADB full observe; attempts not worse; spike path did not chain U2→ADB on one step.
+
+**Verdict:** microbench **passes** → worth a separate mau/mano item for optional U2 backend + ADB fallback. Not yet productized (venv-only `uiautomator2`, no `DeviceBackend` wiring).
+
 ## Cases (task-level)
 
 | # | Goal template (no payment button words) | Expect |
