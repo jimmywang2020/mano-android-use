@@ -3,6 +3,10 @@
 Host TaskState for「查到目的地预估价、停在叫车前」— mau does not own the recipe;
 pass it as `android_run_plan` stages or several short `android_run`s.
 
+Developer entry + flag index: root [`README.md`](../../README.md). Host operating
+manual: [`../agent-playbook.md`](../agent-playbook.md). TaskState shape:
+[`../examples/task-state.example.json`](../examples/task-state.example.json).
+
 ## Recipe 门禁（成功谓词）
 
 **记忆管接着干；门禁管算不算干完。** 假 GOAL 来自契约太松，不是 `progress` OR-merge 能救。

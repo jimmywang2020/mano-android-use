@@ -8,9 +8,12 @@ appears in `ready.tips` and MCP tool descriptions.
 
 ## Always
 
-1. Call `doctor` then `ready` before a long task. Read `tips[]`, `screen`, `text_backend`.
+1. Call `doctor` then `ready` before a long task. Read `tips[]`, `screen`, `text_backend`,
+   `observe_backend`.
 2. Wireless debug **ports change**. Prefer MCP command `scripts/mau-mcp-with-mumu.sh` (auto-resolves via `resolve-adb-serial.sh`); do not pin a dead `ip:port` in MCP env. CLI: `eval "$(bash scripts/resolve-adb-serial.sh)"`.
 3. Device must be **awake and unlocked**. `android_run` sends one `KEYCODE_WAKEUP`; it does **not** unlock.
+4. Public entry for developers: root [`README.md`](../README.md) / [`README.zh-CN.md`](../README.zh-CN.md)
+   (resume, gates, U2, CLI/MCP flags). This playbook remains the Host operating manual.
 
 ## Default path (multi-step)
 

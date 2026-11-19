@@ -1,6 +1,8 @@
 # Merge into ~/.codex/config.toml (syntax may vary slightly by Codex version).
-# Keys come from project .env (wrapper cd's to repo root). Do not hardcode MuMu ports.
+# Keys come from project .env (wrapper cd's to repo root).
+# Do NOT hardcode MuMu / wireless ip:port — the wrapper re-resolves serial each start.
 # Replace /ABS/PATH/TO/mano-android-use with your clone path.
+# MAU_OBSERVE_BACKEND is optional (omit or "adb" for default; "u2" needs: uv sync --extra u2).
 
 [mcp_servers.mano-android-use]
 command = "/ABS/PATH/TO/mano-android-use/scripts/mau-mcp-with-mumu.sh"
@@ -9,3 +11,4 @@ args = []
 [mcp_servers.mano-android-use.env]
 MAU_GROUNDER_MODEL = "gui-plus-2026-02-26"
 MAU_RUNS_DIR = "/ABS/PATH/TO/mano-android-use/runs"
+MAU_OBSERVE_BACKEND = "u2"

@@ -79,6 +79,25 @@ Cursor UI（2026）：**Customize → MCPs → New MCP Server**（不是只在�
 | Cursor | | | |
 | Codex | | | |
 
+## Phase 5.1 — Host TaskState resume + recipe gates (mau memory wave)
+
+Code + unit coverage landed (`task_patch`, `progress_json`, `forbid_labels`, DiDi
+production plans). Fill the human/MCP rows when re-verified on a live Host.
+
+- [x] `android_run` / `android_run_plan` always return `task_patch` (`mau.task_patch.v1`)
+- [x] MCP/CLI accept `progress_json` / `--progress-json` (OR-seed); plan OR-merges `plan_progress`
+- [x] `forbid_labels` / `success_forbid_labels` / `--success-forbid-label` block search-sheet false GOAL
+- [x] Production DiDi plans: `didi-airport-carpool-vs-special.json` (+ fengye aligned); fixture marked
+- [ ] **MCP live:** short run → merge `task_patch` → resume with `progress_json`, omit `package=`, `cold_start=false`
+- [ ] **Optional:** `MAU_OBSERVE_BACKEND=u2` same airport plan vs ADB (observe cost only)
+- [ ] Host reports `cost_report.narrative` after each run
+
+| Check | Date | Result | Notes |
+|-------|------|--------|-------|
+| MCP TaskState resume | | | |
+| Recipe gate (airport plan) | | | |
+| U2 opt-in (optional) | | | |
+
 ## Phase 6 — B-path `android_run(goal)` (no LangGraph)
 
 ```bash
@@ -158,9 +177,9 @@ uv run pytest -q tests/test_apply_action.py tests/test_run_loop.py tests/test_di
 - [x] `propose_action(execute=true)` / `mau propose --execute` deprecated unless `MAU_ALLOW_PROPOSE_EXECUTE=1`
 - [x] Journal/execution `via`: `android_run` | `propose_execute` | `l0_direct`
 - [x] Playbook + Cursor rule + README tool groups; `docs/eval-golden.md`
-- [x] Optional `stuck_same_summary` on `android_run` (default 0 = off)
+- [x] Optional `stuck_same_summary` on `android_run` (default **3**; `0` = off)
 
-See [`docs/plan-next.md`](plan-next.md).
+See [`docs/plan-next.md`](plan-next.md) for memory / TaskState / recipe-gate Done rows.
 
 ## Later
 
