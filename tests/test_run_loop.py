@@ -844,6 +844,10 @@ def test_cost_report_scoped_to_history_not_prior_journal(monkeypatch, tmp_path: 
     assert res.continue_hint is not None
     assert res.continue_hint.get("next_actor") == "done"
     assert res.to_dict().get("resume", {}).get("next_actor") == "done"
+    patch = res.to_dict().get("task_patch") or {}
+    assert patch.get("schema") == "mau.task_patch.v1"
+    assert patch.get("status") == TERMINAL_OK
+    assert patch.get("resume", {}).get("next_actor") == "done"
 
 
 def test_instruction_includes_progress_and_digest_labels():
@@ -874,6 +878,33 @@ def test_screen_digest_evidence_refs():
     )
     assert d["evidence_refs"]["screenshot"].endswith("step-01.png")
     assert d["evidence_refs"]["xml"].endswith("step-01.xml")
+
+
+def test_build_and_merge_task_patch():
+    from mano_android_use.run_loop import build_task_patch, merge_task_state, parse_progress_json
+
+    patch = build_task_patch(
+        status="TIME_BUDGET",
+        goal="查价",
+        run_id="r1",
+        run_dir="runs/r1",
+        progress={"opened_app": True},
+        screen_digest={
+            "package": "com.demo",
+            "labels": ["一口价"],
+            "evidence_refs": {"screenshot": "runs/r1/s.png", "xml": "runs/r1/s.xml"},
+        },
+        resume={"next_actor": "host", "do": {"omit_package": True}},
+    )
+    assert patch["schema"] == "mau.task_patch.v1"
+    assert patch["evidence_refs"]["screenshot"].endswith("s.png")
+    state = merge_task_state({"progress": {"opened_app": True}}, patch)
+    state = merge_task_state(state, {"progress": {"fare_seen": True}, "status": "GOAL_REACHED"})
+    assert state["progress"]["opened_app"] is True
+    assert state["progress"]["fare_seen"] is True
+    assert state["status"] == "GOAL_REACHED"
+    assert parse_progress_json('{"fare_seen": true}')["fare_seen"] is True
+    assert parse_progress_json({"opened_app": True})["opened_app"] is True
 
 
 def test_initial_progress_seeds_run(monkeypatch, tmp_path: Path):

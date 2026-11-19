@@ -96,6 +96,17 @@ def main(argv: list[str] | None = None) -> int:
         default=-1,
         help="Unchanged-screen threshold (default 3; 0=off). Skip VLM / recover / STUCK",
     )
+    p_run.add_argument(
+        "--wall-budget-ms",
+        type=int,
+        default=0,
+        help="Soft wall budget (ms); 0=off. MCP-like resume demos use e.g. 45000",
+    )
+    p_run.add_argument(
+        "--progress-json",
+        default="",
+        help='Host TaskState progress seed, e.g. \'{"fare_seen":true}\'',
+    )
     p_plan = sub.add_parser(
         "run-plan",
         help="Run a staged plan JSON (generic A/B/C + per-stage success_check)",
@@ -268,6 +279,13 @@ def main(argv: list[str] | None = None) -> int:
             labels_all=list(args.success_labels_all or []),
         )
         stuck_arg = None if int(args.stuck_same_summary) < 0 else int(args.stuck_same_summary)
+        from .run_loop import parse_progress_json
+
+        try:
+            seeded = parse_progress_json(args.progress_json)
+        except Exception as exc:  # noqa: BLE001
+            _print({"status": "ERROR", "reason": f"progress_json: {exc}"})
+            return 1
         result = android_run(
             session,
             args.goal,
@@ -278,6 +296,8 @@ def main(argv: list[str] | None = None) -> int:
             tree_hints=list(args.tree_hints or []),
             stuck_same_summary=stuck_arg,
             cold_start=bool(args.cold_start),
+            wall_budget_ms=int(args.wall_budget_ms or 0),
+            initial_progress=seeded or None,
         )
         _print(result.to_dict())
         return 0 if result.status == TERMINAL_OK else 1

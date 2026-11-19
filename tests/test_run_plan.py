@@ -139,6 +139,10 @@ def test_plan_injects_continuity_context(monkeypatch):
     assert "fare_seen" in contexts[2] or "Accumulated progress" in contexts[2]
     assert res.continue_hint and res.continue_hint.get("next_actor") == "done"
     assert res.to_dict().get("resume", {}).get("next_actor") == "done"
+    patch = res.to_dict().get("task_patch") or {}
+    assert patch.get("schema") == "mau.task_patch.v1"
+    assert patch.get("plan_progress", {}).get("fare_seen") is True
+    assert patch.get("progress", {}).get("fare_seen") is True
 
 
 def test_plan_state_prompt_rules():

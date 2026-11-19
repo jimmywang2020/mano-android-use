@@ -47,10 +47,16 @@ raw `summary` alone under ColorOS U2 dumps.
 - **费用串台**：长 MCP session 曾把多任务 journal 累进一份 `cost_report`。现 `android_run`/`android_run_plan` 会 `begin_run` 换 `run_id`，且 cost 按当次 `history` 计。
 - 终态报价 XML 常 **不含** 终点地名（只在地图像素上）；不要用终态树验证「香蜜湖/机场」字符串。
 
-## Resume
+## Resume + Host TaskState
 
-On `TIME_BUDGET` / `STUCK` / `ERROR`，读 `resume`/`continue_hint`，填 `do.*`（omit `package=`，`cold_start=false`）。
-若 `progress.fare_seen`，不要 HOME / force-stop。
+On `TIME_BUDGET` / `STUCK` / `ERROR`（以及成功时的 checkpoint）：
+
+1. 合并回包里的 **`task_patch`** → Host TaskState（OR-merge `progress`；替换 `resume` / `screen_digest`）。
+2. 填 `resume.do.*`：omit `package=`，`cold_start=false`，保留 `tree_hints` / `success_check`。
+3. 下一轮 `android_run` 带 **`progress_json`** = TaskState.progress（否则 `fare_seen` 跨 MCP 调用会丢）。
+4. 若 `progress.fare_seen`，不要 HOME / force-stop。
+
+Shape: [`../examples/task-state.example.json`](../examples/task-state.example.json)。
 
 ## Verified promotion (optional, Host-side)
 

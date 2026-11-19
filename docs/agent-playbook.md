@@ -39,15 +39,19 @@ Host times out empty.
 
 **Host resume = fill the form**, do not rewrite from chat prose:
 
-1. Read `resume` / `continue_hint` **before** `cost_report.narrative` (always present;
-   `next_actor=done` on `GOAL_REACHED`, else `host`).
+1. Read **`task_patch`** (stable merge blob) or `resume` / `continue_hint` **before**
+   `cost_report.narrative` (always present; `next_actor=done` on `GOAL_REACHED`, else `host`).
 2. If `next_actor=host`, call `android_run` with `resume.do` fields: same `goal` (or
    refine only if `progress` says so), **`omit package=`** (`do.omit_package=true`),
-   `cold_start=false`, keep `tree_hints` / `success_check` from `do`.
+   `cold_start=false`, keep `tree_hints` / `success_check` from `do`, and pass
+   **`progress_json`** = `JSON.stringify(TaskState.progress)` so mau OR-seeds
+   `fare_seen` / `goal_matched` (mau does **not** persist Host TaskState).
 3. Honor `dont[]`: no `HOME`, no `force_stop` / cold `launch_app`, no
    `rewrite_goal_from_scratch`, no `propose_action` main loop.
-4. Carry `progress` / `screen_digest` (and `evidence_refs` paths) in Host TaskState
-   across MCP calls. Plan returns also include `plan_progress` (OR-merged across stages).
+4. Merge `task_patch` into Host TaskState across MCP calls (OR-merge `progress` /
+   `plan_progress`; replace `resume` / `screen_digest` / `evidence_refs` / `status`).
+   Helper shape: `merge_task_state(state, task_patch)` in `run_loop` (copy logic into
+   Host if needed). Shape example: [`examples/task-state.example.json`](examples/task-state.example.json).
 
 - Very long jobs: prefer CLI `mau run` / `mau run-plan` (no MCP soft budget by default), or
   multiple short MCP stages via `android_run_plan`.
@@ -56,7 +60,9 @@ Host times out empty.
 
 ### GoalCard shape (Host TaskState)
 
-Treat each task as a card mau can consume via `android_run` / `plan_json` stages:
+Treat each task as a card mau can consume via `android_run` / `plan_json` stages.
+Every `android_run` / `android_run_plan` return includes **`task_patch`**
+(`schema: mau.task_patch.v1`) for Host merge — mau never writes Host disk.
 
 | Field | Role |
 |-------|------|
@@ -65,8 +71,9 @@ Treat each task as a card mau can consume via `android_run` / `plan_json` stages
 | `stop_when` / `success_check` | Package + labels (default scans **foreground tree**, not dirty summary alone) |
 | `forbidden` | Payment / submit / cold relaunch |
 | `hints` / `tree_hints` | Stable a11y strings for tree-shortcut |
-| `progress` | OR-merge facts from mau (`fare_seen`, `goal_matched`, …) |
+| `progress` | OR-merge facts from mau (`fare_seen`, `goal_matched`, …); seed next call via `progress_json` |
 | `resume` | Last ResumeSpec — preferred next call |
+| `screen_digest` / `evidence_refs` | Last filtered labels + shot/xml paths (debug / audit) |
 
 Example DiDi fare plan: [`examples/plans/ab-didi-xiangmihu-fare.json`](examples/plans/ab-didi-xiangmihu-fare.json);
 recipe notes: [`recipes/didi.md`](recipes/didi.md).

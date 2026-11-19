@@ -249,18 +249,21 @@ def android_run(
     tree_hints: str = "",
     stuck_same_summary: int = -1,
     cold_start: bool = False,
+    progress_json: str = "",
 ) -> str:
     """PRIMARY: bounded observe→propose→act loop toward a natural-language goal.
 
     Host picks the goal; mau orchestrates the loop; Grounder sees screenshots; L0 acts.
     MCP defaults: max_steps=10, wall soft-budget ~90s → may return TIME_BUDGET +
-    cost_report + continue_hint (re-call short android_run; do not switch to L0 loop).
+    cost_report + continue_hint/resume + **task_patch** (merge into Host TaskState;
+    re-call short android_run; do not switch to L0 loop).
     Unchanged screen (default): skip VLM, recover once (BACK) then STUCK — but not
     for a few steps after type (search IME grace).
     tree_hints: comma-separated labels for tree-first tap before VLM (also uses「quoted」in goal).
     package=: warm-ensure by default (no force-stop if already foreground). Set
     cold_start=true only for a true relaunch. On TIME_BUDGET resume, omit package=
-    or keep cold_start=false.
+    or keep cold_start=false, and pass progress_json from TaskState.progress
+    (OR-seed; mau does not persist Host TaskState).
     Long jobs: multiple short MCP calls or CLI `mau run` / `mau run-plan`.
     Response includes cost_report: total_ms, tokens, by_phase, vlm_skipped, by_via,
     per_step, and narrative — always relay cost_report.narrative (+ dominant_phase) to the user.
@@ -275,6 +278,7 @@ def android_run(
     See docs/agent-playbook.md and docs/examples/ctrip-beijing-homestay.md.
     """
     from .run_loop import android_run as _android_run
+    from .run_loop import parse_progress_json
     from .success_check import SuccessCheck
 
     def _split(raw: str) -> list[str]:
@@ -286,6 +290,10 @@ def android_run(
         labels_all=_split(success_labels_all),
     )
     stuck_arg = None if int(stuck_same_summary) < 0 else int(stuck_same_summary)
+    try:
+        seeded = parse_progress_json(progress_json)
+    except Exception as exc:  # noqa: BLE001 — surface bad Host JSON clearly
+        return _dumps({"status": "ERROR", "reason": f"progress_json: {exc}"})
     result = _android_run(
         _session(),
         goal,
@@ -297,6 +305,7 @@ def android_run(
         tree_hints=_split(tree_hints),
         stuck_same_summary=stuck_arg,
         cold_start=bool(cold_start),
+        initial_progress=seeded or None,
     )
     return _dumps(result.to_dict())
 

@@ -110,6 +110,103 @@ TERMINAL_TIME_BUDGET = "TIME_BUDGET"
 TERMINAL_ERROR = "ERROR"
 
 
+TASK_PATCH_SCHEMA = "mau.task_patch.v1"
+
+
+def build_task_patch(
+    *,
+    status: str,
+    goal: str = "",
+    run_id: str = "",
+    run_dir: str = "",
+    progress: dict[str, Any] | None = None,
+    plan_progress: dict[str, Any] | None = None,
+    screen_digest: dict[str, Any] | None = None,
+    resume: dict[str, Any] | None = None,
+    plan_id: str = "",
+) -> dict[str, Any]:
+    """Stable Host merge blob — mau does not persist TaskState for the Host.
+
+    Host OR-merges ``progress`` / ``plan_progress``, replaces ``resume`` /
+    ``screen_digest`` / ``status``, and on the next short ``android_run`` passes
+    progress back via ``progress_json`` / ``initial_progress``.
+    """
+    prog = dict(progress or {})
+    if plan_progress:
+        # Prefer explicit plan_progress as the accumulated source of truth.
+        merged = dict(prog)
+        for k, v in plan_progress.items():
+            if v:
+                merged[k] = v
+        prog = merged
+    digest = screen_digest if isinstance(screen_digest, dict) else None
+    if digest is None and isinstance(resume, dict):
+        maybe = resume.get("screen_digest")
+        digest = maybe if isinstance(maybe, dict) else None
+    patch: dict[str, Any] = {
+        "schema": TASK_PATCH_SCHEMA,
+        "status": status,
+        "goal": goal or "",
+        "run_id": run_id or "",
+        "run_dir": run_dir or "",
+        "progress": prog,
+    }
+    if plan_progress is not None:
+        patch["plan_progress"] = dict(plan_progress)
+    if plan_id:
+        patch["plan_id"] = plan_id
+    if digest is not None:
+        patch["screen_digest"] = digest
+        refs = digest.get("evidence_refs")
+        if isinstance(refs, dict) and refs:
+            patch["evidence_refs"] = dict(refs)
+    if resume is not None:
+        patch["resume"] = resume
+    return patch
+
+
+def merge_task_state(
+    state: dict[str, Any] | None,
+    patch: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Host-side helper: OR-merge progress; replace resume/digest/status from patch."""
+    out: dict[str, Any] = dict(state or {})
+    if not patch:
+        return out
+    prog = dict(out.get("progress") or {})
+    for src_key in ("progress", "plan_progress"):
+        src = patch.get(src_key)
+        if isinstance(src, dict):
+            for k, v in src.items():
+                if v:
+                    prog[k] = v
+    out["progress"] = prog
+    if "plan_progress" in patch and isinstance(patch.get("plan_progress"), dict):
+        out["plan_progress"] = dict(patch["plan_progress"])
+    for key in ("status", "goal", "run_id", "run_dir", "plan_id", "resume", "screen_digest", "evidence_refs"):
+        if key in patch and patch[key] is not None:
+            out[key] = patch[key]
+    out["schema"] = TASK_PATCH_SCHEMA
+    return out
+
+
+def parse_progress_json(raw: str | dict[str, Any] | None) -> dict[str, Any]:
+    """Parse Host-supplied progress JSON (MCP string or dict). Empty → {}."""
+    if raw is None:
+        return {}
+    if isinstance(raw, dict):
+        return {str(k): v for k, v in raw.items()}
+    text = str(raw).strip()
+    if not text:
+        return {}
+    import json
+
+    data = json.loads(text)
+    if not isinstance(data, dict):
+        raise ValueError("progress_json must be a JSON object")
+    return {str(k): v for k, v in data.items()}
+
+
 def continue_hint_for_run(
     *,
     goal: str,
@@ -234,6 +331,15 @@ class RunResult:
             out["progress"] = self.progress
         if self.screen_digest is not None:
             out["screen_digest"] = self.screen_digest
+        out["task_patch"] = build_task_patch(
+            status=self.status,
+            goal=self.goal,
+            run_id=self.run_id,
+            run_dir=self.run_dir,
+            progress=self.progress,
+            screen_digest=self.screen_digest,
+            resume=self.continue_hint,
+        )
         return out
 
 

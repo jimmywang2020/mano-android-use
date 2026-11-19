@@ -176,6 +176,23 @@ class PlanResult:
         if self.continue_hint is not None:
             out["continue_hint"] = self.continue_hint
             out["resume"] = self.continue_hint
+        from .run_loop import build_task_patch
+
+        digest = None
+        if isinstance(self.continue_hint, dict):
+            maybe = self.continue_hint.get("screen_digest")
+            digest = maybe if isinstance(maybe, dict) else None
+        out["task_patch"] = build_task_patch(
+            status=self.status,
+            goal=str((self.continue_hint or {}).get("goal") or ""),
+            run_id=self.run_id,
+            run_dir=self.run_dir,
+            progress=self.plan_progress,
+            plan_progress=self.plan_progress,
+            screen_digest=digest,
+            resume=self.continue_hint,
+            plan_id=self.plan_id,
+        )
         return out
 
 

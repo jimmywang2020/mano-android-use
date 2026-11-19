@@ -1,0 +1,44 @@
+{
+  "schema": "mau.task_patch.v1",
+  "intent": "查打车预估价",
+  "goal": "读出打车到深圳机场的预估价格，停在报价页。不要点呼叫或支付。",
+  "params": { "dest": "深圳机场", "city": "深圳" },
+  "package": "com.sdu.didi.psnger",
+  "forbidden": ["呼叫", "确认叫车", "支付", "HOME", "force_stop"],
+  "status": "TIME_BUDGET",
+  "run_id": "20261119-example",
+  "run_dir": "runs/20261119-example",
+  "progress": {
+    "opened_app": true,
+    "fare_seen": false
+  },
+  "screen_digest": {
+    "package": "com.sdu.didi.psnger",
+    "labels": ["您想去哪里", "上车点"],
+    "evidence_refs": {
+      "screenshot": "runs/20261119-example/step-03.png",
+      "xml": "runs/20261119-example/step-03.xml"
+    }
+  },
+  "resume": {
+    "next_actor": "host",
+    "do": {
+      "tool": "android_run",
+      "goal": "读出打车到深圳机场的预估价格，停在报价页。不要点呼叫或支付。",
+      "omit_package": true,
+      "cold_start": false,
+      "max_steps": 8,
+      "tree_hints": ["您想去哪里", "输入目的地"],
+      "success_check": {
+        "package": "com.sdu.didi.psnger",
+        "labels_any": ["一口价", "未拼成", "选路线"]
+      }
+    },
+    "dont": ["HOME", "force_stop", "launch_app", "rewrite_goal_from_scratch", "propose_action_loop"],
+    "progress": { "opened_app": true }
+  },
+  "_host_next_call": {
+    "note": "Fill android_run from resume.do + progress_json=JSON.stringify(progress)",
+    "progress_json": "{\"opened_app\":true}"
+  }
+}
