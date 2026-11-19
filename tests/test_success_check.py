@@ -99,6 +99,18 @@ def test_resume_spec_shape():
     assert hint["action"] == "android_run"  # legacy
 
 
+def test_resume_spec_done_on_goal_reached():
+    hint = continue_hint_for_run(
+        goal="查价",
+        status="GOAL_REACHED",
+        progress={"fare_seen": True},
+        screen_digest={"labels": ["一口价"], "evidence_refs": {"xml": "/tmp/x.xml"}},
+    )
+    assert hint["next_actor"] == "done"
+    assert "Goal reached" in hint["suggestion"]
+    assert hint["progress"]["fare_seen"] is True
+
+
 def test_early_stop_on_success_check(monkeypatch):
     class _S:
         run_id = "r"

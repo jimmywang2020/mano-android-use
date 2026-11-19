@@ -840,3 +840,67 @@ def test_cost_report_scoped_to_history_not_prior_journal(monkeypatch, tmp_path: 
     assert res.status == TERMINAL_OK
     assert res.cost_report["prompt_tokens"] == 12
     assert res.cost_report["total_ms"] < 5000
+    # ResumeSpec always present, including GOAL_REACHED.
+    assert res.continue_hint is not None
+    assert res.continue_hint.get("next_actor") == "done"
+    assert res.to_dict().get("resume", {}).get("next_actor") == "done"
+
+
+def test_instruction_includes_progress_and_digest_labels():
+    from mano_android_use.run_loop import _instruction
+
+    text = _instruction(
+        "查价",
+        "package=demo; labels=[首页]",
+        2,
+        10,
+        progress={"fare_seen": True, "saw:一口价": True},
+        digest_labels=["一口价29.8元", "特价拼车", "未拼成"],
+    )
+    assert "fare_seen" in text
+    assert "一口价29.8元" in text
+    assert "do not press BACK" in text.lower() or "do not BACK" in text or "Progress hold" in text
+
+
+def test_screen_digest_evidence_refs():
+    from mano_android_use.run_loop import screen_digest_dict
+
+    d = screen_digest_dict(
+        package="com.demo",
+        summary="package=com.demo; labels=[a]",
+        xml='<hierarchy><node package="com.demo" text="a" bounds="[0,0][10,10]"/></hierarchy>',
+        screenshot_path="/tmp/run/step-01.png",
+        xml_path="/tmp/run/step-01.xml",
+    )
+    assert d["evidence_refs"]["screenshot"].endswith("step-01.png")
+    assert d["evidence_refs"]["xml"].endswith("step-01.xml")
+
+
+def test_initial_progress_seeds_run(monkeypatch, tmp_path: Path):
+    session = _FakeSession(run_dir=tmp_path)
+    session._summary = "package=app.demo; labels=[一口价, 未拼成]"
+    session.last_xml = (
+        '<hierarchy><node package="app.demo" text="一口价"/><node package="app.demo" text="未拼成"/></hierarchy>'
+    )
+
+    class _G:
+        model = "fake"
+
+        def propose(self, *a, **k):
+            raise AssertionError("should early-stop on success_check")
+
+    monkeypatch.setattr("mano_android_use.run_loop.Grounder", lambda model=None: _G())
+    from mano_android_use.success_check import SuccessCheck
+
+    res = android_run(
+        session,
+        "见价即可",
+        max_steps=3,
+        stuck_same_summary=0,
+        success_check=SuccessCheck(labels_any=["一口价"]),
+        initial_progress={"opened_app": True},
+        new_run=False,
+    )
+    assert res.status == TERMINAL_OK
+    assert res.progress and res.progress.get("opened_app") is True
+    assert res.progress.get("fare_seen") or res.progress.get("goal_matched")

@@ -26,6 +26,17 @@ from .success_check import SuccessCheck
 from .trace_report import plan_cost_report
 
 
+def _or_merge_progress(
+    base: dict[str, Any] | None,
+    extra: dict[str, Any] | None,
+) -> dict[str, Any]:
+    out = dict(base or {})
+    for k, v in (extra or {}).items():
+        if v:
+            out[k] = v
+    return out
+
+
 @dataclass
 class PlanState:
     """Thin cross-stage memory (LangGraph-style state, without LangGraph)."""
@@ -34,6 +45,7 @@ class PlanState:
     last_summary: str = ""
     last_package: str = ""
     last_reason: str = ""
+    progress: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -41,6 +53,7 @@ class PlanState:
             "last_summary": self.last_summary,
             "last_package": self.last_package,
             "last_reason": self.last_reason,
+            "progress": dict(self.progress),
         }
 
     def as_goal_context(self, *, current_stage_id: str) -> str:
@@ -58,6 +71,16 @@ class PlanState:
             "- Prefer the smallest next UI action from the current screen toward THIS stage goal only.",
             "- Ignore ads (dismiss/back); never pay or submit an order.",
         ]
+        if self.progress:
+            bits = [k for k, v in self.progress.items() if v][:16]
+            if bits:
+                lines.append(
+                    "- Accumulated progress bits (do not undo): " + ", ".join(bits) + "."
+                )
+            if self.progress.get("fare_seen") or self.progress.get("cart_seen"):
+                lines.append(
+                    "- Fare/cart already seen earlier in this plan — do not BACK/HOME away."
+                )
         return "\n".join(lines)
 
 
@@ -128,6 +151,7 @@ class PlanResult:
     run_dir: str = ""
     reason: str = ""
     plan_state: dict[str, Any] | None = None
+    plan_progress: dict[str, Any] | None = None
     cost_report: dict[str, Any] | None = None
     continue_hint: dict[str, Any] | None = None
 
@@ -144,10 +168,14 @@ class PlanResult:
         }
         if self.plan_state is not None:
             out["plan_state"] = self.plan_state
+        if self.plan_progress:
+            out["plan_progress"] = self.plan_progress
+            out["progress"] = self.plan_progress  # Host TaskState alias
         if self.cost_report is not None:
             out["cost_report"] = self.cost_report
         if self.continue_hint is not None:
             out["continue_hint"] = self.continue_hint
+            out["resume"] = self.continue_hint
         return out
 
 
@@ -170,8 +198,8 @@ def android_run_plan(
 ) -> PlanResult:
     """Run stages sequentially on one session; stop on first non-OK stage.
 
-    Between stages, ``PlanState`` is injected into the next stage's grounder
-    prompt so the model continues from the current screen.
+    Between stages, ``PlanState`` (including OR-merged ``progress``) is injected
+    into the next stage so facts like ``fare_seen`` survive stage boundaries.
 
     ``wall_budget_ms`` is passed to each stage ``android_run`` (MCP soft budget).
     """
@@ -205,6 +233,7 @@ def android_run_plan(
             wall_budget_ms=wall_budget_ms,
             tree_hints=list(stage.tree_hints or []),
             new_run=False,
+            initial_progress=dict(state.progress),
         )
         row = {
             "id": stage.id,
@@ -217,6 +246,7 @@ def android_run_plan(
         state.last_summary = result.last_summary or state.last_summary
         state.last_package = result.package or state.last_package
         state.last_reason = result.reason or state.last_reason
+        state.progress = _or_merge_progress(state.progress, result.progress)
 
         if result.status != TERMINAL_OK:
             remaining = [s.id for s in stages[idx + 1 :]]
@@ -225,7 +255,17 @@ def android_run_plan(
                 package=result.package,
                 last_summary=result.last_summary,
                 status=result.status,
+                progress=state.progress,
+                screen_digest=result.screen_digest,
+                tree_hints=list(stage.tree_hints or []),
+                success_check=(
+                    stage.success_check.to_dict()
+                    if stage.success_check and not stage.success_check.is_empty()
+                    else None
+                ),
             )
+            # Prefer plan-accumulated progress on the ResumeSpec.
+            hint = {**hint, "progress": dict(state.progress)}
             if result.status == TERMINAL_TIME_BUDGET:
                 hint = {
                     **hint,
@@ -248,11 +288,28 @@ def android_run_plan(
                 run_dir=str(session.run_dir),
                 reason=f"stage {stage.id} → {result.status}: {result.reason}",
                 plan_state=state.to_dict(),
+                plan_progress=dict(state.progress) if state.progress else None,
                 cost_report=plan_cost_report(stage_rows),
                 continue_hint=hint,
             )
         state.completed_stage_ids.append(stage.id)
 
+    # Success: still emit ResumeSpec so Host can checkpoint TaskState.
+    last = stage_rows[-1]["result"] if stage_rows else {}
+    done_hint = continue_hint_for_run(
+        goal=str(last.get("goal") or stages[-1].goal),
+        package=state.last_package,
+        last_summary=state.last_summary,
+        status=TERMINAL_OK,
+        progress=state.progress,
+        screen_digest=last.get("screen_digest") if isinstance(last, dict) else None,
+        tree_hints=list(stages[-1].tree_hints or []),
+        success_check=(
+            stages[-1].success_check.to_dict()
+            if stages[-1].success_check and not stages[-1].success_check.is_empty()
+            else None
+        ),
+    )
     return PlanResult(
         status=TERMINAL_OK,
         plan_id=plan_id,
@@ -263,5 +320,7 @@ def android_run_plan(
         run_dir=str(session.run_dir),
         reason="all stages GOAL_REACHED",
         plan_state=state.to_dict(),
+        plan_progress=dict(state.progress) if state.progress else None,
         cost_report=plan_cost_report(stage_rows),
+        continue_hint=done_hint,
     )

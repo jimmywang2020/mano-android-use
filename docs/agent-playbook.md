@@ -39,13 +39,15 @@ Host times out empty.
 
 **Host resume = fill the form**, do not rewrite from chat prose:
 
-1. Read `resume` / `continue_hint` **before** `cost_report.narrative`.
-2. Call `android_run` with `resume.do` fields: same `goal` (or refine only if `progress`
-   says so), **`omit package=`** (`do.omit_package=true`), `cold_start=false`, keep
-   `tree_hints` / `success_check` from `do`.
+1. Read `resume` / `continue_hint` **before** `cost_report.narrative` (always present;
+   `next_actor=done` on `GOAL_REACHED`, else `host`).
+2. If `next_actor=host`, call `android_run` with `resume.do` fields: same `goal` (or
+   refine only if `progress` says so), **`omit package=`** (`do.omit_package=true`),
+   `cold_start=false`, keep `tree_hints` / `success_check` from `do`.
 3. Honor `dont[]`: no `HOME`, no `force_stop` / cold `launch_app`, no
    `rewrite_goal_from_scratch`, no `propose_action` main loop.
-4. Carry `progress` / `screen_digest` in Host TaskState across MCP calls.
+4. Carry `progress` / `screen_digest` (and `evidence_refs` paths) in Host TaskState
+   across MCP calls. Plan returns also include `plan_progress` (OR-merged across stages).
 
 - Very long jobs: prefer CLI `mau run` / `mau run-plan` (no MCP soft budget by default), or
   multiple short MCP stages via `android_run_plan`.

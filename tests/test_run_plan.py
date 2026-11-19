@@ -94,10 +94,13 @@ def test_plan_injects_continuity_context(monkeypatch):
         run_dir = Path("/tmp/mau")
 
     contexts: list[str] = []
+    seeds: list[dict] = []
 
     def _fake_run(session, goal, **kwargs):
         contexts.append(str(kwargs.get("goal_context") or ""))
+        seeds.append(dict(kwargs.get("initial_progress") or {}))
         n = len(contexts)
+        prog = {"opened_app": True} if n == 1 else {"fare_seen": True, "saw:一口价": True}
         return RunResult(
             status=TERMINAL_OK,
             goal=goal,
@@ -108,6 +111,7 @@ def test_plan_injects_continuity_context(monkeypatch):
             reason="ok",
             last_summary=f"sum-{n}",
             package="ctrip.android.view",
+            progress=prog,
         )
 
     monkeypatch.setattr("mano_android_use.run_plan.android_run", _fake_run)
@@ -126,6 +130,15 @@ def test_plan_injects_continuity_context(monkeypatch):
     assert "sum-2" in contexts[2]
     assert res.stages[1]["plan_context_injected"] is True
     assert res.plan_state and res.plan_state["completed_stage_ids"] == ["A", "B", "C"]
+    # Stage B/C receive OR-merged progress from prior stages.
+    assert seeds[0] == {}
+    assert seeds[1].get("opened_app") is True
+    assert seeds[2].get("opened_app") is True
+    assert seeds[2].get("fare_seen") is True
+    assert res.plan_progress and res.plan_progress.get("fare_seen") is True
+    assert "fare_seen" in contexts[2] or "Accumulated progress" in contexts[2]
+    assert res.continue_hint and res.continue_hint.get("next_actor") == "done"
+    assert res.to_dict().get("resume", {}).get("next_actor") == "done"
 
 
 def test_plan_state_prompt_rules():

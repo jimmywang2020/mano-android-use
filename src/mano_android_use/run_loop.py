@@ -121,24 +121,35 @@ def continue_hint_for_run(
     tree_hints: list[str] | None = None,
     success_check: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Host ResumeSpec after TIME_BUDGET / STUCK / incomplete MCP runs.
+    """Host ResumeSpec — emitted on every android_run terminal status.
 
     Keeps legacy keys (``action``, ``goal``, …) and adds structured ``do`` /
-    ``dont`` / ``progress`` so Host can resume by filling a form instead of
-    rewriting the goal or pressing HOME.
+    ``dont`` / ``progress``. On ``GOAL_REACHED``, ``next_actor=done`` (Host may
+    still read progress/digest); otherwise Host fills ``do.*`` and honors dont[].
     """
     digest = screen_digest if isinstance(screen_digest, dict) else {}
     prog = dict(progress or {})
     hints = [str(h).strip() for h in (tree_hints or []) if str(h).strip()]
     check = success_check if isinstance(success_check, dict) else None
-    return {
-        # Legacy keys (compat)
-        "action": "android_run",
-        "suggestion": (
+    done = status == TERMINAL_OK
+    if done:
+        suggestion = (
+            "Goal reached. Carry progress/screen_digest in Host TaskState; "
+            "do not HOME/force-stop. Optional follow-up: short android_run with "
+            "omit_package= and cold_start=false only if refining the same screen."
+        )
+        next_actor = "done"
+    else:
+        suggestion = (
             "Resume with a short android_run from the current screen; "
             "omit package= (or cold_start=false) so mau does not force-stop; "
             "avoid L0 as the main loop. Prefer resume.do fields; honor dont[]."
-        ),
+        )
+        next_actor = "host"
+    return {
+        # Legacy keys (compat)
+        "action": "android_run",
+        "suggestion": suggestion,
         "goal": goal,
         "package": package or "",
         "last_summary": (last_summary or "")[:300],
@@ -146,7 +157,7 @@ def continue_hint_for_run(
         "cold_start": False,
         "reason": status or "",
         # ResumeSpec (structured)
-        "next_actor": "host",
+        "next_actor": next_actor,
         "do": {
             "tool": "android_run",
             "goal": goal,
@@ -317,18 +328,28 @@ def screen_digest_dict(
     package: str,
     summary: str,
     xml: str = "",
+    screenshot_path: str = "",
+    xml_path: str = "",
 ) -> dict[str, Any]:
-    """Host-facing digest: filtered labels + signature (no full XML)."""
+    """Host-facing digest: filtered labels + signature + evidence paths (no full XML)."""
     from .tree import screen_digest_labels
 
     pkg = (package or "").strip()
     labels = screen_digest_labels(xml or "", package=pkg or None, max_labels=24, max_nodes=120)
-    return {
+    out: dict[str, Any] = {
         "package": pkg,
         "labels": labels,
         "summary": _normalize_summary(summary)[:240],
         "signature": screen_signature(package=pkg, summary=summary, xml=xml),
     }
+    refs: dict[str, str] = {}
+    if screenshot_path:
+        refs["screenshot"] = str(screenshot_path)
+    if xml_path:
+        refs["xml"] = str(xml_path)
+    if refs:
+        out["evidence_refs"] = refs
+    return out
 
 
 def resolve_stuck_same_summary(value: int | None = None) -> int:
@@ -405,6 +426,8 @@ def _instruction(
     success_check: SuccessCheck | None = None,
     check_feedback: str = "",
     goal_context: str = "",
+    progress: dict[str, Any] | None = None,
+    digest_labels: list[str] | None = None,
 ) -> str:
     parts: list[str] = []
     if goal_context.strip():
@@ -419,6 +442,19 @@ def _instruction(
             "Never pay, confirm payment, or submit an order.",
         ]
     )
+    # Short RunMemory view for Grounder (format on demand; keep token-light).
+    prog = {k: v for k, v in (progress or {}).items() if v}
+    if prog:
+        bits = [f"{k}" for k in list(prog.keys())[:12]]
+        parts.append("Known progress bits (do not undo): " + ", ".join(bits) + ".")
+    labels = [str(x).strip() for x in (digest_labels or []) if str(x).strip()]
+    if labels:
+        parts.append("Screen digest labels: " + ", ".join(labels[:16]) + ".")
+    if prog.get("fare_seen") or prog.get("cart_seen"):
+        parts.append(
+            "Progress hold: fare/cart already seen — do not press BACK/HOME; "
+            "prefer terminate:success if the quote/cart UI is visible."
+        )
     if success_check and not success_check.is_empty():
         parts.append(
             "External success_check (must hold before success is accepted): "
@@ -444,6 +480,7 @@ def android_run(
     tree_hints: list[str] | None = None,
     cold_start: bool = False,
     new_run: bool = True,
+    initial_progress: dict[str, Any] | None = None,
 ) -> RunResult:
     """Run a bounded observe→propose→act loop toward ``goal``.
 
@@ -467,6 +504,8 @@ def android_run(
 
     ``new_run``: when True (default), rotate to a fresh ``run_id``/``run_dir`` so
     Host ``cost_report`` is scoped to this call. Plan stages pass False.
+
+    ``initial_progress``: OR-seed from prior plan stage / Host TaskState (merge-only).
     """
     if new_run and hasattr(session, "begin_run"):
         session.begin_run()
@@ -546,6 +585,8 @@ def android_run(
             if v:
                 progress[k] = v
 
+    _merge_progress(initial_progress)
+
     def _result(
         status: str,
         *,
@@ -554,6 +595,7 @@ def android_run(
         verdict: dict[str, Any] | None = None,
         with_continue_hint: bool = False,
     ) -> RunResult:
+        del with_continue_hint  # ResumeSpec is always attached now.
         trace_doc = write_trace(
             session.run_dir,
             run_id=session.run_id,
@@ -562,18 +604,16 @@ def android_run(
             model=grounder.model,
             history=history,
         )
-        hint = None
-        if with_continue_hint or status == TERMINAL_TIME_BUDGET:
-            hint = continue_hint_for_run(
-                goal=goal,
-                package=last_package,
-                last_summary=last_summary,
-                status=status,
-                progress=progress,
-                screen_digest=last_digest,
-                tree_hints=tree_candidates,
-                success_check=check_dict,
-            )
+        hint = continue_hint_for_run(
+            goal=goal,
+            package=last_package,
+            last_summary=last_summary,
+            status=status,
+            progress=progress,
+            screen_digest=last_digest,
+            tree_hints=tree_candidates,
+            success_check=check_dict,
+        )
         return RunResult(
             status=status,
             goal=goal,
@@ -651,6 +691,8 @@ def android_run(
             package=last_package,
             summary=last_summary,
             xml=session.last_xml or "",
+            screenshot_path=str(obs.get("screenshot_path") or ""),
+            xml_path=str(obs.get("xml_path") or ""),
         )
         sig = str(last_digest.get("signature") or "")
         entry: dict[str, Any] = {
@@ -933,6 +975,8 @@ def android_run(
                 success_check=success_check if isinstance(success_check, SuccessCheck) else None,
                 check_feedback=check_feedback,
                 goal_context=goal_context,
+                progress=progress,
+                digest_labels=list(last_digest.get("labels") or []),
             ),
         )
         grounder_ms = max(0, int((time.perf_counter() - t_g0) * 1000))
