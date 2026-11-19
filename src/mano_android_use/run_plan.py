@@ -122,6 +122,11 @@ class RunStage:
                     "package": raw.get("success_package"),
                     "labels_any": raw.get("success_labels_any") or raw.get("labels_any"),
                     "labels_all": raw.get("success_labels_all") or raw.get("labels_all"),
+                    "forbid_labels": (
+                        raw.get("success_forbid_labels")
+                        or raw.get("forbid_labels")
+                        or raw.get("require_absent")
+                    ),
                     "use_xml": raw.get("use_xml"),
                 }
             )

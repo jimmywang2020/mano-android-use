@@ -1,12 +1,13 @@
 {
   "id": "didi-fengye-carpool-vs-special",
-  "description": "DiDi: set dest 枫叶健身, stop on fare sheet, report 拼车 vs 特价/特惠(不拼车) prices. No call/pay. Checks tightened vs 香蜜湖 false-complete.",
+  "role": "production",
+  "description": "PRODUCTION DiDi recipe gate: dest 枫叶健身. Same gate shape as airport — B fare-sheet signals + forbid 请输入终点; C labels_all 未拼成+一口价. No call/pay.",
   "goal_card": {
     "intent": "分别查看拼车与特价车预估价",
     "params": {"dest": "枫叶健身"},
     "package": "com.sdu.didi.psnger",
     "forbidden": ["呼叫", "确认叫车", "支付", "HOME", "force_stop"],
-    "stop_when": ["一口价", "拼成", "特惠", "惊喜特价"]
+    "stop_when": ["未拼成", "一口价"]
   },
   "stages": [
     {
@@ -24,20 +25,24 @@
       "id": "B_set_dest_fengye",
       "max_steps": 12,
       "tree_hints": ["您想去哪里", "输入目的地", "枫叶健身"],
-      "goal": "把目的地设为「枫叶健身」（选中具体地点，不要停在空的「请输入终点」推荐列表）。进入车型/预估价页或首页出现「去：枫叶健身」芯片即可。不要点呼叫、不要支付。",
+      "goal": "把目的地设为「枫叶健身」（选中具体地点，不要停在空的「请输入终点」推荐列表）。进入带「选路线」或车型报价的页即可。不要点呼叫、不要支付。",
       "success_check": {
         "package": "com.sdu.didi.psnger",
-        "labels_any": ["去：枫叶", "选路线", "一口价", "特价拼车", "特惠快车", "惊喜特价", "未拼成"]
+        "labels_any": ["选路线", "一口价", "未拼成", "特惠快车", "惊喜特价"],
+        "forbid_labels": ["请输入终点"],
+        "use_foreground_tree": true
       }
     },
     {
       "id": "C_read_carpool_and_special",
       "max_steps": 12,
-      "tree_hints": ["特价拼车", "极速拼车", "惊喜特价", "特惠快车", "一口价"],
-      "goal": "停在报价/车型列表，分别读出：1) 拼车相关价格（特价拼车/极速拼车的未拼成或拼成价）；2) 不拼车的特价/特惠类价格（惊喜特价或特惠快车的一口价）。不要点呼叫、确认叫车或支付。",
+      "tree_hints": ["特价拼车", "极速拼车", "惊喜特价", "特惠快车", "拼车", "特价"],
+      "goal": "停在报价/车型列表，确认同时能看到：拼车价（未拼成）以及不拼车的特价/特惠一口价（惊喜特价或特惠快车）。可点左侧分类浏览，但不要点呼叫、确认叫车或支付。",
       "success_check": {
         "package": "com.sdu.didi.psnger",
-        "labels_any": ["一口价", "拼成", "特价拼车", "惊喜特价", "特惠快车"],
+        "labels_all": ["未拼成", "一口价"],
+        "labels_any": ["特惠快车", "惊喜特价", "特价拼车", "极速拼车"],
+        "forbid_labels": ["请输入终点"],
         "use_foreground_tree": true
       }
     }

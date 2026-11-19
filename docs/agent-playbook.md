@@ -68,15 +68,19 @@ Every `android_run` / `android_run_plan` return includes **`task_patch`**
 |-------|------|
 | `intent` / `goal` | What to achieve (no payment button copy) |
 | `params` | Dest / SKU / city… |
-| `stop_when` / `success_check` | Package + labels (default scans **foreground tree**, not dirty summary alone) |
+| `stop_when` / `success_check` | Package + labels (default scans **foreground tree**). Prefer **`labels_all`** on terminal stages; use **`forbid_labels`** (e.g. `请输入终点`) so search-sheet dest hits cannot pass |
 | `forbidden` | Payment / submit / cold relaunch |
 | `hints` / `tree_hints` | Stable a11y strings for tree-shortcut |
 | `progress` | OR-merge facts from mau (`fare_seen`, `goal_matched`, …); seed next call via `progress_json` |
 | `resume` | Last ResumeSpec — preferred next call |
 | `screen_digest` / `evidence_refs` | Last filtered labels + shot/xml paths (debug / audit) |
 
-Example DiDi fare plan: [`examples/plans/ab-didi-xiangmihu-fare.json`](examples/plans/ab-didi-xiangmihu-fare.json);
-recipe notes: [`recipes/didi.md`](recipes/didi.md).
+**Recipe gate discipline:** memory resumes work; **gates define success**. Do not use
+loose dest-name `labels_any` as production stop conditions. Preferred DiDi plan:
+[`examples/plans/didi-airport-carpool-vs-special.json`](examples/plans/didi-airport-carpool-vs-special.json)
+（`role: production`）。Fixture only:
+[`examples/plans/ab-didi-xiangmihu-fare.json`](examples/plans/ab-didi-xiangmihu-fare.json)
+（故意松，易假完成）。Recipe: [`recipes/didi.md`](recipes/didi.md).
 
 ### Full observe + skip VLM when possible
 
@@ -185,10 +189,12 @@ not an immediate stage `ERROR`.
 
 ## success_check (prefer for “正确”)
 
-Pass `success_package` / `success_labels_any` / `success_labels_all` so
+Pass `success_package` / `success_labels_any` / `success_labels_all` /
+`success_forbid_labels`（plan JSON: `forbid_labels` / `require_absent`）so
 `GOAL_REACHED` requires an external screen assertion, not only model terminate.
 
-Use **narrow** labels (avoid matching too early). Prefer staged plans over one huge goal
+Use **narrow** labels (avoid matching too early). Terminal stages: prefer
+`labels_all`. Prefer staged production plans over one huge goal / loose fixture OR
 with a loose check.
 
 Example: [docs/examples/ctrip-beijing-homestay.md](examples/ctrip-beijing-homestay.md).

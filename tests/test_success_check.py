@@ -25,6 +25,55 @@ def test_evaluate_package_and_labels():
     assert any("北京" in r for r in bad.reasons)
 
 
+def test_forbid_labels_blocks_search_sheet_false_complete():
+    """Dest-name on 请输入终点 recommend list must not pass a gated check."""
+    loose = evaluate_success(
+        SuccessCheck(package="com.sdu.didi.psnger", labels_any=["香蜜湖"]),
+        package="com.sdu.didi.psnger",
+        summary="labels=[请输入终点, 香蜜湖, 为你推荐]",
+        xml="",
+    )
+    assert loose.ok  # shows why fixture OR is dangerous
+
+    gated = evaluate_success(
+        SuccessCheck(
+            package="com.sdu.didi.psnger",
+            labels_any=["选路线", "一口价", "未拼成"],
+            forbid_labels=["请输入终点"],
+        ),
+        package="com.sdu.didi.psnger",
+        summary="labels=[请输入终点, 香蜜湖, 为你推荐]",
+        xml="",
+    )
+    assert not gated.ok
+    assert any("forbid_labels" in r for r in gated.reasons)
+
+    fare = evaluate_success(
+        SuccessCheck(
+            package="com.sdu.didi.psnger",
+            labels_all=["未拼成", "一口价"],
+            forbid_labels=["请输入终点"],
+        ),
+        package="com.sdu.didi.psnger",
+        summary="labels=[选路线, 未拼成 48.8元, 一口价 32.5 元, 特惠快车]",
+        xml="",
+    )
+    assert fare.ok
+
+
+def test_forbid_labels_from_mapping_aliases():
+    check = SuccessCheck.from_mapping(
+        {
+            "package": "com.sdu.didi.psnger",
+            "labels_any": ["选路线"],
+            "require_absent": ["请输入终点"],
+        }
+    )
+    assert check is not None
+    assert check.forbid_labels == ["请输入终点"]
+    assert "forbid_labels" in check.to_dict()
+
+
 def test_summary_only_ignores_buried_xml_city():
     """Opt out of foreground tree: buried XML city must not trigger."""
     v = evaluate_success(

@@ -1,6 +1,7 @@
 {
   "id": "didi-airport-carpool-vs-special",
-  "description": "DiDi: dest 深圳机场; C requires labels_all both carpool+fixed fare. Clear history before run. No call/pay.",
+  "role": "production",
+  "description": "PRODUCTION DiDi recipe gate: dest 深圳机场. B requires fare-sheet signals + forbid 请输入终点 (no dest-name-only OR). C labels_all 未拼成+一口价. Clear history before run. No call/pay.",
   "goal_card": {
     "intent": "分别查看拼车与特价车预估价",
     "params": {"dest": "深圳机场"},
@@ -27,7 +28,9 @@
       "goal": "把目的地设为「深圳机场」（选中具体机场/航站楼地点，不要停在空的「请输入终点」推荐列表）。进入带「选路线」或车型报价的页即可。不要点呼叫、不要支付。",
       "success_check": {
         "package": "com.sdu.didi.psnger",
-        "labels_any": ["选路线", "一口价", "特价拼车", "特惠快车", "惊喜特价", "未拼成"]
+        "labels_any": ["选路线", "一口价", "未拼成", "特惠快车", "惊喜特价"],
+        "forbid_labels": ["请输入终点"],
+        "use_foreground_tree": true
       }
     },
     {
@@ -39,6 +42,7 @@
         "package": "com.sdu.didi.psnger",
         "labels_all": ["未拼成", "一口价"],
         "labels_any": ["特惠快车", "惊喜特价", "特价拼车", "极速拼车"],
+        "forbid_labels": ["请输入终点"],
         "use_foreground_tree": true
       }
     }

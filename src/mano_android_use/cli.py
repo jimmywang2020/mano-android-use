@@ -84,6 +84,13 @@ def main(argv: list[str] | None = None) -> int:
         help="success_check: labels_all substring (repeatable)",
     )
     p_run.add_argument(
+        "--success-forbid-label",
+        action="append",
+        default=[],
+        dest="success_forbid_labels",
+        help="success_check: forbid_labels / require_absent (repeatable)",
+    )
+    p_run.add_argument(
         "--tree-hint",
         action="append",
         default=[],
@@ -277,6 +284,7 @@ def main(argv: list[str] | None = None) -> int:
             package=args.success_package or None,
             labels_any=list(args.success_labels or []),
             labels_all=list(args.success_labels_all or []),
+            forbid_labels=list(args.success_forbid_labels or []),
         )
         stuck_arg = None if int(args.stuck_same_summary) < 0 else int(args.stuck_same_summary)
         from .run_loop import parse_progress_json

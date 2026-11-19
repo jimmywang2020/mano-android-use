@@ -14,11 +14,13 @@ from .tree import screen_digest_labels
 
 @dataclass
 class SuccessCheck:
-    """Declarative screen assertions.
+    """Declarative screen assertions (recipe gate).
 
     - ``package``: foreground package must equal this (exact).
     - ``labels_any``: at least one substring must appear in the search blob.
-    - ``labels_all``: every substring must appear.
+    - ``labels_all``: every substring must appear (prefer for terminal stages).
+    - ``forbid_labels`` / ``require_absent``: none of these substrings may appear
+      (e.g. ``请输入终点`` so dest-name hits on the search sheet cannot pass).
     - ``use_xml``: if True, search full accessibility XML (noisy; can false-hit
       buried promo nodes).
     - ``use_foreground_tree``: if True (default), also search systemui-filtered
@@ -29,11 +31,17 @@ class SuccessCheck:
     package: str | None = None
     labels_any: list[str] = field(default_factory=list)
     labels_all: list[str] = field(default_factory=list)
+    forbid_labels: list[str] = field(default_factory=list)
     use_xml: bool = False
     use_foreground_tree: bool = True
 
     def is_empty(self) -> bool:
-        return not self.package and not self.labels_any and not self.labels_all
+        return (
+            not self.package
+            and not self.labels_any
+            and not self.labels_all
+            and not self.forbid_labels
+        )
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {}
@@ -43,6 +51,8 @@ class SuccessCheck:
             out["labels_any"] = list(self.labels_any)
         if self.labels_all:
             out["labels_all"] = list(self.labels_all)
+        if self.forbid_labels:
+            out["forbid_labels"] = list(self.forbid_labels)
         if self.use_xml:
             out["use_xml"] = True
         if not self.use_foreground_tree:
@@ -56,15 +66,24 @@ class SuccessCheck:
         package = raw.get("package")
         labels_any = raw.get("labels_any") or raw.get("labels") or []
         labels_all = raw.get("labels_all") or []
+        forbid = (
+            raw.get("forbid_labels")
+            or raw.get("require_absent")
+            or raw.get("labels_forbid")
+            or []
+        )
         if isinstance(labels_any, str):
             labels_any = [p.strip() for p in labels_any.split(",") if p.strip()]
         if isinstance(labels_all, str):
             labels_all = [p.strip() for p in labels_all.split(",") if p.strip()]
+        if isinstance(forbid, str):
+            forbid = [p.strip() for p in forbid.split(",") if p.strip()]
         use_fg = raw.get("use_foreground_tree")
         check = cls(
             package=str(package).strip() if package else None,
             labels_any=[str(x) for x in labels_any if str(x).strip()],
             labels_all=[str(x) for x in labels_all if str(x).strip()],
+            forbid_labels=[str(x) for x in forbid if str(x).strip()],
             use_xml=bool(raw.get("use_xml")),
             use_foreground_tree=True if use_fg is None else bool(use_fg),
         )
@@ -141,6 +160,10 @@ def evaluate_success(
             )
         else:
             matched.append(hit)
+
+    for needle in check.forbid_labels:
+        if _present(needle):
+            reasons.append(f"forbid_labels present {needle!r}")
 
     return SuccessVerdict(ok=not reasons, reasons=reasons, matched=matched)
 

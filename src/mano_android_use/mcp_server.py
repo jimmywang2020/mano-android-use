@@ -246,6 +246,7 @@ def android_run(
     success_package: str = "",
     success_labels_any: str = "",
     success_labels_all: str = "",
+    success_forbid_labels: str = "",
     tree_hints: str = "",
     stuck_same_summary: int = -1,
     cold_start: bool = False,
@@ -269,8 +270,9 @@ def android_run(
     per_step, and narrative — always relay cost_report.narrative (+ dominant_phase) to the user.
     Playbook:
     - Known app → set package= (e.g. ctrip.android.view); avoid browser+中文 search.
-    - Optional success_check: success_package + success_labels_any/all (comma-separated).
-      Early-stops when the screen matches; vetoes false terminate:success.
+    - Optional success_check: success_package + success_labels_any/all +
+      success_forbid_labels (comma-separated; e.g. 请输入终点). Prefer labels_all
+      for terminal stages. Early-stops when the screen matches; vetoes false terminate:success.
     - Long / multi-stage goals → prefer android_run_plan with short max_steps per stage.
     - Tries KEYCODE_WAKEUP once if asleep; still off → NEED_HUMAN (unlock manually).
     - Chinese typing needs AdbKeyboard (see ready.tips); install dialogs are not this tool.
@@ -288,6 +290,7 @@ def android_run(
         package=success_package.strip() or None,
         labels_any=_split(success_labels_any),
         labels_all=_split(success_labels_all),
+        forbid_labels=_split(success_forbid_labels),
     )
     stuck_arg = None if int(stuck_same_summary) < 0 else int(stuck_same_summary)
     try:
