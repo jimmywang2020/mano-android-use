@@ -22,6 +22,7 @@
 | **N Label index + safe tree_shortcut** | **Done** — N0–N5 (DiDi live GOAL 2026-11-24; Meituan via fixture+live XML) |
 | **O Host Continuity (A short runs + B lost-MCP)** | **Done*** — O0–O2+O4–O6 Meituan live PASS 2026-11-26; O3 optional leftover |
 | **P Cut spin (wrong-page / soft-gate / dull hints)** | **Done*** — P0–P5; live PASS* 2026-11-26 (~3.7min mau vs O6 5.5) |
+| **Q Wall-clock hygiene (no STUCK→L0; dump137; dynamic C hints)** | **Active** — Q0–Q3 landed 2026-11-26; **Q4 live** pending |
 
 ## Phase M — Anti-redo (closed)
 
@@ -71,35 +72,67 @@
 
 **Deferred (eval):** mau Session TaskStore — helps lost `task_patch`, amplifies false GOAL if auto-seeded; revisit only with explicit `task_begin` + no auto `on_done`.
 
-## Phase P — Cut spin (wrong-page / soft-gate / dull hints) (active)
+## Phase P — Cut spin (wrong-page / soft-gate / dull hints) (closed*)
 
 **Why (O6 retro):** Dual-drink mau ~5.5min of which ~1min effective add+verify; ~4.5min spin from **wrong stage page**, **soft enter gate** (`点菜` tab), **wide `tree_shortcut` hints**, **no pre-`find` before next short run**. Cross-task mechanisms; dual-drink amplifies.
 
-**Fix only the high-ROI bucket** (do **not** kill soft wall budget / unchanged skip / tree-first entirely).
+| ID | Scope | Exit |
+|----|--------|------|
+| **P0–P5** | **Done*** | Soft A gate, SKU-first hints, shortcut→VLM, `slot_peek`, live PASS* 2026-11-26. Follow-ups → **Phase Q**. |
+
+## Phase Q — Wall-clock hygiene (active)
+
+**Why (P5 / 意图分流重测 2026-11-26):** A→D 墙钟 ~**5.6min**，有效 `step_ms`（A+B+C2+D）仅 ~**1.8min**。差额主要来自：
+
+| 桶 | 大约 | 根因 |
+|----|------|------|
+| STUCK 后 Host **L0 连点** | ~51s + 空隙 | C1 STUCK 后 observe/tap/BACK；每次叠 **ui_dump 137** |
+| **ui_dump / ui_refresh_error 137** | in-run 间隔合计 ~99s | 无线 ADB / uiautomator 重试把一步撑胖 |
+| **首轮 C hint 不对** | C1 整段 ~34s+ | 店内无「奶茶」仍用配方 hint → STUCK → 再 C2 |
+
+意图分流已单独落地（搜框 focus>submit）；本 Phase **不再做分流**。
+
+### Success metrics（三目标）
+
+| # | 目标 | 衡量 | 非目标 |
+|---|------|------|--------|
+| 1 | **完成任务** | dual-drink：`已添加2件`+`去结算`、停支付前；SKU 尽量柠檬茶+另一单杯（允许无奶茶时动态换） | 假 PASS（1 件当 2 件） |
+| 2 | **降成本** | **墙钟** A→D（及 mau `Σstep_ms`）；对标上次 ~5.6min → 目标 **≲3min** 墙钟 | **不计 token** |
+| 3 | **泛化** | 纪律/基建 app-agnostic；第二杯 hint **当场 find**，禁止写死店内 SKU | Meituan SM；slots 死写「林里招牌」 |
+
+### Do / Don't
 
 | | Do | Don't |
 |--|----|-------|
-| Host | Split slots; tight `done_when`; replace hints; `find` before next run | Giant goal; inherit「选规格」 |
-| mau | Soft-gate hygiene helpers; shortcut miss → VLM; optional hint ban after noop | Lengthen MCP wall; Meituan SM |
-| Grounder | Only when shortcut abstains / fails | Force VLM every step |
-| L0 | Keep as late correction | Main loop |
+| Host | STUCK/`TIME_BUDGET` → **`find` / `slot_peek` → 换 hint → 短 `android_run`** | STUCK 后 L0 连点当主路径 |
+| Host | 进 C 前 `find` 可见第二杯（奶茶或另一单杯）再开 **一次** C | 为「跳过 C1」写死 SKU |
+| mau | 提高 dump 成功率 / 缩短 137 重试；journal 可观测 | 失败就跳过 tree 校验（伤完成） |
+| L0 | 仅 install 对话框 / 单点纠偏（如非 clickable「加入购物车」祖先） | STUCK 后连环 tap/BACK |
 
 ### Sub-phases
 
-| ID | Scope | Exit |
-|----|--------|------|
-| **P0 Contract** | This section + playbook「spin budget」; acceptance Phase P | **Done** |
-| **P1 Enter-store gate** | Dual-drink **A**: no bare「点菜」; menu evidence; **A2_open_menu** | **Done** (unit) |
-| **P2 Hint hygiene** | SKU-first acquire hints; rule/tips STUCK → find/`slot_peek` | **Done** |
-| **P3 Shortcut fallback** | `tree_shortcut` no screen change / Guard NO_OP → VLM same step (`tree_shortcut_miss`) | **Done** (unit+KPI) |
-| **P4 Preflight Host path** | `mau slot-next` / MCP `slot_peek` (O3) | **Done** |
-| **P5 Live re-measure** | Dual-drink N× short; mau ≪ 5.5min; no false 1-item PASS | **Done*** (~3.7min; see acceptance) |
+| ID | Scope | Exit | 对三目标 |
+|----|--------|------|----------|
+| **Q0 Contract** | 本节 + playbook「Wall-clock hygiene」+ acceptance Phase Q；墙钟指标不计 token | **Done** | — |
+| **Q1 Host：禁 STUCK→L0** | rule / tips / playbook / recipe 硬纪律 | **Done** | 完成↑/持平；墙钟 −~70s（按上次账）；泛化强 |
+| **Q2 mau：ui_dump 137** | Act 前若 observe XML 仍新鲜则 **跳过** 二次 `ui_dump`（`MAU_UI_REFRESH_MAX_AGE_MS`，默认 8s）；journal `ui_refresh_skipped` / `ui_refresh_error.code`；失败保留旧 XML（不吞成成功） | **Done**（unit）；live 减 137 见 Q4 | 完成↑；墙钟预期大降；泛化强 |
+| **Q3 Host：进 C 动态 hint** | recipe/playbook：B 后 `find` → 填 C hints；禁死 SKU | **Done**（docs） | 完成持平/升；少 C1；泛化靠流程 |
+| **Q4 Live re-measure** | 同机 dual-drink：禁 L0、新 dump、进 C 前 find；记录墙钟 / dump137 / C 轮数 | **Pending** | 三目标验收 |
 
-**Order:** P0→P1→P2→P3→P4→P5（P3/P4 可并行于 P2 后）。
+**Order:** Q0 → Q1 ∥ Q2 → Q3 → Q4（Q1/Q2 可并行；Q3 不依赖 Q2 代码，但 live 建议三项齐）。
 
-**Non-goals:** raise MCP `wall_budget_ms` to “fix” spin; disable unchanged skip globally; Session TaskStore; UNSAT price; payment automation.
+**Predicted wall (上次 333s 账，非承诺):**
 
-**Risks:** P1 tighter A → more A TIME_BUDGET (acceptable vs wrong-page B); P3 more VLM tokens on dull hints (acceptable vs white taps).
+| 组合 | 预测墙钟 |
+|------|----------|
+| 仅 Q1 | ~4.4min |
+| 仅 Q2（保守） | ~4.1–4.4min |
+| Q1+Q2 | ~2.9–3.2min |
+| Q1+Q2+Q3（无 C1） | ~2.5–3.0min |
+
+**Non-goals:** 优化 token；加长单次 `android_run`；Session TaskStore；支付自动化；把第二杯 SKU 写进 slots 死数据；关闭 tree-first / unchanged skip。
+
+**Risks:** Q2 若「跳过失败 dump」→ shortcut 误判成功（伤目标1）— 必须修成功率而非吞错。Q3 若 Host 偷懒写死 SKU → 伤目标3 并间接伤目标1。
 
 ## Env flags
 
@@ -108,6 +141,7 @@
 | `MAU_ALLOW_PROPOSE_EXECUTE=1` | Allow deprecated `propose_action(execute=true)` / `mau propose --execute` |
 | `MAU_OBSERVE_BACKEND=adb\|u2` | Observe path (`u2` needs `uv sync --extra u2`; fallback to ADB on failure) |
 | `MAU_STUCK_SAME_SUMMARY` | Override unchanged-screen threshold when CLI/MCP leave default |
+| `MAU_UI_REFRESH_MAX_AGE_MS` | Phase Q2: skip act-path `ui_dump` when `last_xml` younger than this (default `8000`; `0` = always dump) |
 
 ## Trace / KPI
 

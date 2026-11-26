@@ -29,9 +29,24 @@ from .tips import build_tips
 from .trace_report import EVENT_L0_STEP, build_step_span
 from .tree import compact_nodes, find_by_text, summarize
 
+# Phase Q2: skip redundant ui_dump before act when observe XML is still fresh.
+# Wireless ADB often OOMs (exit 137) on a second dump seconds after full observe.
+ENV_UI_REFRESH_MAX_AGE_MS = "MAU_UI_REFRESH_MAX_AGE_MS"
+_DEFAULT_UI_REFRESH_MAX_AGE_MS = 8000
+
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
+
+
+def _ui_refresh_max_age_ms() -> int:
+    raw = (os.getenv(ENV_UI_REFRESH_MAX_AGE_MS) or "").strip()
+    if not raw:
+        return _DEFAULT_UI_REFRESH_MAX_AGE_MS
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return _DEFAULT_UI_REFRESH_MAX_AGE_MS
 
 
 @dataclass
@@ -47,6 +62,7 @@ class DeviceSession:
     last_size: tuple[int, int] = (0, 0)
     _journal: list[dict[str, Any]] = field(default_factory=list)
     _u2: U2ObserveBackend | None = field(default=None, repr=False)
+    _last_xml_ms: int = 0
 
     @classmethod
     def open(
@@ -291,6 +307,7 @@ class DeviceSession:
         # Partial modes must not wipe the other modality's last_* cache.
         if obs.xml:
             self.last_xml = obs.xml
+            self._last_xml_ms = _now_ms()
         if obs.foreground:
             self.last_package = obs.foreground
         if obs.width > 0 and obs.height > 0:
@@ -494,13 +511,53 @@ class DeviceSession:
         action = {"action": "type", "text": text}
         return self._act(action, semantic_hint=semantic_hint or text, via=via)
 
-    def _refresh_ui_snapshot(self) -> None:
-        """Fresh XML + package before safety. Needed because each CLI invoke is a new process."""
+    def _refresh_ui_snapshot(self, *, force: bool = False) -> None:
+        """XML + package before safety.
+
+        Phase Q2: if ``last_xml`` from a recent observe is still within
+        ``MAU_UI_REFRESH_MAX_AGE_MS`` (default 8s), skip ``ui_dump`` — a second
+        dump on wireless ADB often exits 137 and burns 10–14s while keeping the
+        old XML anyway. Package is still refreshed (cheap). Set force=True or
+        max-age 0 to always dump.
+        """
+        max_age = _ui_refresh_max_age_ms()
+        age = (_now_ms() - self._last_xml_ms) if self._last_xml_ms else None
+        reuse = (
+            not force
+            and max_age > 0
+            and bool(self.last_xml.strip())
+            and age is not None
+            and age <= max_age
+        )
         try:
             self.last_package = self.adb.foreground_package()
-            self.last_xml = self.adb.ui_dump().decode("utf-8", errors="replace")
         except Exception as exc:  # noqa: BLE001
-            self._log({"event": "ui_refresh_error", "error": str(exc)[:300]})
+            self._log(
+                {"event": "ui_refresh_error", "error": ("foreground: " + str(exc))[:300]}
+            )
+        if reuse:
+            self._log(
+                {
+                    "event": "ui_refresh_skipped",
+                    "reason": "fresh_xml",
+                    "age_ms": age,
+                    "max_age_ms": max_age,
+                }
+            )
+        else:
+            try:
+                self.last_xml = self.adb.ui_dump().decode("utf-8", errors="replace")
+                self._last_xml_ms = _now_ms()
+            except Exception as exc:  # noqa: BLE001
+                code = getattr(exc, "code", None) or ""
+                self._log(
+                    {
+                        "event": "ui_refresh_error",
+                        "error": str(exc)[:300],
+                        "code": str(code) if code else None,
+                        "kept_prior_xml": bool(self.last_xml.strip()),
+                    }
+                )
         if self.last_size == (0, 0):
             shot = self.run_dir / f"size-{self.step or 0}.png"
             try:

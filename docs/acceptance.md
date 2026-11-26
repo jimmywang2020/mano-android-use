@@ -140,6 +140,21 @@ See [`docs/plan-next.md`](plan-next.md) Phase P.
 | P1–P4 unit | 2026-11-26 | PASS | world_evidence / host_slots / run_loop / resume_from_run / guard / kpi (52) |
 | P5 Meituan dual re-measure | 2026-11-26 | PASS* | **Mechanics OK / SKU intent miss.** Reload MCP. A `152528`→**爷爷不泡茶** (not LINLEE); A2 `152714` GOAL+`tree_shortcut_miss`; B `152804`→Host find 1件; C `153212` GOAL 34s; D `153300` 去结算+已添加2件. mau≈3.7min≪5.5. **Actual cart SKUs: 兰香青柠 + 青提柠檬水** — not recipe `柠檬茶`+`奶茶` (C never added 奶茶). Gate「2件+停支付前」成立；配方品类意图未验收。 |
 
+## Phase Q — Wall-clock hygiene
+
+See [`docs/plan-next.md`](plan-next.md) Phase Q. Metrics: **wall clock** (not tokens); completion; generalization.
+
+- [x] **Q0** Contract: plan-next Phase Q + playbook「Wall-clock hygiene」+ this table
+- [x] **Q1** Host: ban STUCK→L0 chains (rule / tips / playbook / recipe)
+- [x] **Q2** mau: skip redundant `ui_dump` when observe XML is fresh (`MAU_UI_REFRESH_MAX_AGE_MS`); log `ui_refresh_skipped` / richer `ui_refresh_error`
+- [x] **Q3** Dual-drink: before C, `find` visible second drink (docs/recipe); no hardcoded store SKU
+- [x] **Q4 Live:** A→D `已添加2件`+stop-before-pay; no STUCK→L0 main loop; ≤1 failed C; **avoid 特价/拼好饭**; wall ~5min (mau Σ≈2min) vs prior ~5.6min — ≲3min wall not yet hit
+
+| Check | Date | Result | Notes |
+|-------|------|--------|-------|
+| Q0–Q3 docs + unit | 2026-11-26 | PASS | playbook/rule/tips/recipe; `tests/test_session_ui_refresh.py` (fresh skip / stale dump / force / max-age 0) |
+| Q4 Meituan dual wall re-measure | 2026-11-26 | PASS* | 普通外卖进 LINLEE；B 单丛鸭屎香 + C 林里招牌 → `已添加2件`+`去结算`（未点支付）。勿进特价/拼好饭。l0_share=0 on runs；墙钟~5min / mau Σ~2min（目标≲3min 未达） |
+
 ## Phase 6 — B-path `android_run(goal)` (no LangGraph)
 
 ```bash

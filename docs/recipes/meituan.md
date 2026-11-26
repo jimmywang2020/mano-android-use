@@ -31,7 +31,14 @@ mau 会从「已添加N件」类 a11y **建议** `progress.world.cart_count`（�
 
 A 进店（菜单证据）→ **A2_open_menu**（可选：外送/上滑露规格；`find` 已见选规格则 Host `on_done` 跳过）→ B 第一杯（`已添加1件`）→ C 第二杯（**换** SKU-first hints，`已添加2件`）→ D verify（`labels_all: 去结算+已添加2件`）。
 
-**Cursor：** 用 [`../examples/slots/meituan-dual-drink.slots.json`](../examples/slots/meituan-dual-drink.slots.json) **N×短 `android_run`**（Phase O-A）；STUCK 后 `slot_peek`/`find` 再短跑。不要一次 MCP `android_run_plan` 扛全程。丢包走 Phase O-B，件数以「已添加N件」为准。
+**进 C 前（Phase Q3，动态 hint）：**
+
+1. `find`「奶茶」；有则 C hints 以奶茶 SKU-first。  
+2. 无奶茶 → `find` 菜单上 **另一单杯**（勿与 B 的 `world.sku_keys` 重复；避开套餐/选套餐）。  
+3. 再开 **一次** `android_run`（不要先空跑一轮 STUCK 再手搓 L0）。  
+4. **禁止**把某店具体品名（如「林里招牌」）写死进 slots 只为「跳过 C1」——伤泛化。
+
+**Cursor：** 用 [`../examples/slots/meituan-dual-drink.slots.json`](../examples/slots/meituan-dual-drink.slots.json) **N×短 `android_run`**（Phase O-A）；STUCK/`TIME_BUDGET` 后 **`find`/`slot_peek` → 换 hint → 短跑**，**不要** L0 连点（Phase Q1）。不要一次 MCP `android_run_plan` 扛全程。丢包走 Phase O-B，件数以「已添加N件」为准。
 
 ## Host SlotSpec（推荐）
 

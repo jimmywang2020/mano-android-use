@@ -61,6 +61,20 @@ Keep soft MCP wall + unchanged skip + tree-first — fix the gates:
 
 CLI/MCP: `mau slot-next <slots.json> [--progress-json …]` / `slot_peek`.
 
+### Wall-clock hygiene (Phase Q)
+
+P5/intent-routing retest: A→D wall ~5.6min vs ~1.8min useful `step_ms`. Cut Host/L0 waste
+and dump thrash — **measure wall clock, not tokens**.
+
+| Do | Don't |
+|----|--------|
+| After STUCK/`TIME_BUDGET`: **`find` / `slot_peek` → replace hints → short `android_run`** | STUCK 后 **L0 连点**（tap/BACK 连环当主路径） |
+| Before dual-drink **C**: `find` 可见第二杯（奶茶 **或** 菜单上另一单杯）再开 **一次** C | 为「跳过 C1」把 SKU **写死**进 slots |
+| Prefer recent observe XML for act safety (mau skips redundant `ui_dump` when fresh) | Ignore `ui_refresh_error` / force dump every L0 tap after a full observe |
+| L0 only for install dialogs / one-off「加入购物车」祖先纠偏 | 用 L0 替代换 hint 的短跑 |
+
+Acceptance targets: dual-drink wall **≲3min** when Q1–Q3 followed; still `已添加2件`+stop-before-pay.
+
 ### MCP soft budget + ResumeSpec (avoid Host `-32001`)
 
 MCP `android_run` defaults to **short** calls (`max_steps=10`, wall soft-budget ~**90s**). When the
@@ -319,10 +333,12 @@ Acceptance checklist: [`docs/eval-vision-gating.md`](eval-vision-gating.md).
 Use `observe` → `find` / `tap` / `swipe` / `type_text` / `press_button` for:
 
 - APK install / ColorOS「继续安装」dialogs
-- One-off nudge after a failed run
+- One-off nudge after a failed run (e.g. non-clickable「加入购物车」→ clickable ancestor)
 - Debugging coordinates
 
-Not for multi-step product goals.
+**Not** for multi-step product goals, and **not** as the recovery loop after
+`STUCK` / `TIME_BUDGET` (Phase Q): that path is `find`/`slot_peek` → replace
+`tree_hints` → short `android_run` with `progress_json`.
 
 ## Chinese text
 
