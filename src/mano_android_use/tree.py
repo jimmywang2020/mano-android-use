@@ -350,6 +350,102 @@ def find_by_text(xml: str, query: str, *, limit: int = 10, package: str | None =
     return hits
 
 
+# Text-field classes (short names after rsplit in _row_from_node).
+_INPUT_CLASSES = frozenset(
+    {"EditText", "AutoCompleteTextView", "MultiAutoCompleteTextView"}
+)
+# Queries that usually mean "focus the field to type", not "press submit".
+_FOCUS_QUERY_MARKERS = (
+    "搜索",
+    "搜尋",
+    "search",
+    "请输入",
+    "請輸入",
+    "输入",
+    "輸入",
+    "去哪",
+    "目的地",
+    "where",
+    "destination",
+)
+_SUBMIT_EXACT_LABELS = frozenset(
+    {
+        "搜索",
+        "搜尋",
+        "查找",
+        "检索",
+        "Search",
+        "SEARCH",
+        "Go",
+        "GO",
+        "Find",
+        "FIND",
+    }
+)
+_INPUT_BLOB_MARKERS = (
+    "搜索框",
+    "輸入框",
+    "输入框",
+    "search_box",
+    "searchbox",
+    "search_bar",
+    "searchbar",
+    "search_edit",
+    "请输入",
+    "請輸入",
+    "text_field",
+    "edittext",
+    "autocomplete",
+)
+
+
+def _node_blob(n: dict[str, Any]) -> str:
+    return " ".join(
+        str(x) for x in (n.get("text"), n.get("desc"), n.get("resource_id")) if x
+    )
+
+
+def looks_like_focus_query(query: str) -> bool:
+    """True when ``query`` is typically about focusing a type-in field."""
+    q = (query or "").strip()
+    if not q:
+        return False
+    low = q.lower()
+    return any(m.lower() in low for m in _FOCUS_QUERY_MARKERS)
+
+
+def is_input_like(n: dict[str, Any]) -> bool:
+    """EditText / search-box affordance (not a submit control)."""
+    cls = str(n.get("class") or "")
+    if cls in _INPUT_CLASSES:
+        return True
+    blob = _node_blob(n).lower()
+    return any(m.lower() in blob for m in _INPUT_BLOB_MARKERS)
+
+
+def is_submit_control(n: dict[str, Any], query: str = "") -> bool:
+    """Button-like control that submits/search-goes rather than focuses input.
+
+    App-agnostic: short exact labels (搜索/Search/Go) or Button whose label
+    equals the focus query. Does **not** treat long action labels
+    (``加入购物车``) as submit-for-focus routing.
+    """
+    cls = str(n.get("class") or "")
+    if cls not in {"Button", "ImageButton", "MaterialButton"} and "Button" not in cls:
+        return False
+    text = str(n.get("text") or "").strip()
+    desc = str(n.get("desc") or "").strip()
+    label = text or desc
+    if not label:
+        return False
+    if label in _SUBMIT_EXACT_LABELS:
+        return True
+    q = (query or "").strip()
+    if q and looks_like_focus_query(q) and (text == q or desc == q):
+        return True
+    return False
+
+
 def resolve_tap_target(
     xml: str,
     query: str,
@@ -363,6 +459,11 @@ def resolve_tap_target(
     to the smallest clickable ancestor that **fully contains the label bounds**.
     Reject wide+tall bottom chrome (``operation_view`` / 代叫) that does not own
     the query — those often overlap car-row label centers.
+
+    **Intent routing (focus vs submit):** for focus-like queries (搜索/请输入/…)
+    or when both an input-like hit and a submit Button match, prefer the input /
+    search-box path over a short submit Button (avoids Meituan-style default-term
+    search). Does not change long action Buttons such as「加入购物车」.
     """
     q = (query or "").strip()
     if not q:
@@ -376,12 +477,7 @@ def resolve_tap_target(
 
     labeled: list[dict[str, Any]] = []
     for n in nodes:
-        blob = " ".join(
-            str(x)
-            for x in (n.get("text"), n.get("desc"), n.get("resource_id"))
-            if x
-        )
-        if q in blob:
+        if q in _node_blob(n):
             labeled.append(n)
         if len(labeled) >= limit:
             break
@@ -389,12 +485,7 @@ def resolve_tap_target(
         return None
 
     def _owns_query(n: dict[str, Any]) -> bool:
-        blob = " ".join(
-            str(x)
-            for x in (n.get("text"), n.get("desc"), n.get("resource_id"))
-            if x
-        )
-        return q in blob
+        return q in _node_blob(n)
 
     def _is_bottom_chrome(n: dict[str, Any]) -> bool:
         """Wide AND tall strip in the lower half — DiDi operation_view / 代叫."""
@@ -417,12 +508,53 @@ def resolve_tap_target(
             and int(outer.get("bottom") or 0) >= int(inner.get("bottom") or 0)
         )
 
-    clickable_labeled = [n for n in labeled if n.get("clickable") and n.get("center")]
-    seed = clickable_labeled[0] if clickable_labeled else next(
-        (n for n in labeled if n.get("center")), None
-    )
+    def _pick_seed(cands: list[dict[str, Any]]) -> dict[str, Any] | None:
+        with_center = [n for n in cands if n.get("center")]
+        if not with_center:
+            return None
+        inputs = [n for n in with_center if is_input_like(n)]
+        submits = [n for n in with_center if is_submit_control(n, q)]
+        others = [
+            n
+            for n in with_center
+            if not is_input_like(n) and not is_submit_control(n, q)
+        ]
+        route_focus = looks_like_focus_query(q) or (bool(inputs) and bool(submits))
+
+        def _first_clickable_or_any(pool: list[dict[str, Any]]) -> dict[str, Any] | None:
+            if not pool:
+                return None
+            for n in pool:
+                if n.get("clickable"):
+                    return n
+            return pool[0]
+
+        if route_focus:
+            for pool in (inputs, others):
+                picked = _first_clickable_or_any(pool)
+                if picked is not None:
+                    return picked
+            # Last resort: submit (no input alternative on screen).
+            return _first_clickable_or_any(submits) or with_center[0]
+
+        clickable = [n for n in with_center if n.get("clickable")]
+        return clickable[0] if clickable else with_center[0]
+
+    seed = _pick_seed(labeled)
     if seed is None:
         return None
+
+    focus_route = looks_like_focus_query(q) or (
+        is_input_like(seed) and any(is_submit_control(n, q) for n in labeled)
+    )
+
+    def _skip_as_chrome(n: dict[str, Any]) -> bool:
+        """Bottom-chrome reject; focus climb keeps search-bar wrappers."""
+        if not _is_bottom_chrome(n):
+            return False
+        if focus_route and (is_input_like(n) or is_input_like(seed)):
+            return False
+        return True
 
     target = seed
     if not seed.get("clickable"):
@@ -434,21 +566,69 @@ def resolve_tap_target(
         containers.sort(
             key=lambda n: int(n.get("width") or 0) * int(n.get("height") or 1)
         )
+        # Focus path: smallest input-like wrapper (search_bar) before generic.
+        if focus_route:
+            containers = sorted(
+                containers,
+                key=lambda n: (
+                    0 if is_input_like(n) else 1,
+                    int(n.get("width") or 0) * int(n.get("height") or 1),
+                ),
+            )
         chosen = None
         for n in containers:
+            if focus_route and is_submit_control(n, q):
+                continue
             if _owns_query(n):
                 chosen = n
                 break
         if chosen is None:
             for n in containers:
-                if not _is_bottom_chrome(n):
-                    chosen = n
-                    break
+                if _skip_as_chrome(n):
+                    continue
+                if focus_route and is_submit_control(n, q):
+                    continue
+                chosen = n
+                break
         if chosen is None:
             return None
         target = chosen
+    elif focus_route and is_submit_control(seed, q):
+        # Clickable submit won only as last resort; if a better container for an
+        # input-like labeled sibling exists, retarget.
+        input_seeds = [n for n in labeled if is_input_like(n) and n.get("center")]
+        if input_seeds:
+            alt = _pick_seed(input_seeds)
+            if alt is not None and not is_submit_control(alt, q):
+                if alt.get("clickable"):
+                    target = alt
+                else:
+                    containers = [
+                        n
+                        for n in nodes
+                        if n.get("clickable")
+                        and _contains_bounds(n, alt)
+                        and not is_submit_control(n, q)
+                        and not (
+                            _is_bottom_chrome(n)
+                            and not (is_input_like(n) or is_input_like(alt))
+                        )
+                    ]
+                    containers.sort(
+                        key=lambda n: (
+                            0 if is_input_like(n) else 1,
+                            int(n.get("width") or 0) * int(n.get("height") or 1),
+                        )
+                    )
+                    if containers:
+                        target = containers[0]
+                        seed = alt
 
-    if _is_bottom_chrome(target) and not _owns_query(target):
+    if (
+        _is_bottom_chrome(target)
+        and not _owns_query(target)
+        and not (focus_route and (is_input_like(target) or is_input_like(seed)))
+    ):
         return None
     rid = str(target.get("resource_id") or "")
     if "operation_view" in rid and not _owns_query(target):

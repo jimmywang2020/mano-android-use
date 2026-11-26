@@ -1,0 +1,25 @@
+<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
+<!-- Meituan-like search chrome: placeholder EditText + submit Button「搜索」.
+     Live miss: tree_hint「搜索」resolved to the Button (default-term search).
+     Intent routing must prefer the EditText / search_bar over the submit Button. -->
+<hierarchy rotation="0">
+<node class="android.widget.FrameLayout" package="com.sankuai.meituan"
+      clickable="false" bounds="[0,0][1080,2400]"
+      resource-id="com.sankuai.meituan:id/root">
+  <node index="0" text="" class="android.view.ViewGroup" package="com.sankuai.meituan"
+        clickable="true" bounds="[48,360][1032,480]"
+        resource-id="com.sankuai.meituan:id/search_bar">
+    <!-- Non-clickable field first (common); only Button is clickable among「搜索」hits. -->
+    <node index="0" text="搜索商家或商品" class="android.widget.EditText"
+          package="com.sankuai.meituan" clickable="false" bounds="[80,380][860,460]"
+          resource-id="com.sankuai.meituan:id/search_edit"/>
+    <node index="1" text="搜索" class="android.widget.Button"
+          package="com.sankuai.meituan" clickable="true" bounds="[880,380][1010,460]"
+          resource-id="com.sankuai.meituan:id/search_btn"/>
+  </node>
+  <node index="1" text="外卖" class="android.widget.TextView"
+        package="com.sankuai.meituan" clickable="true" bounds="[80,520][240,600]"/>
+  <node index="2" text="底栏占位" class="android.widget.TextView"
+        package="com.sankuai.meituan" clickable="false" bounds="[0,2300][1080,2400]"/>
+</node>
+</hierarchy>

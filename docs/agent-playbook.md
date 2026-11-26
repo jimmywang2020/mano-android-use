@@ -282,7 +282,8 @@ Inside `android_run` (default `stuck_same_summary=3`, override with `0` / env `M
    type/click/swipe; **`fare_seen` / `cart_seen` progress holds** (no suicide BACK — Host
    gets ResumeSpec with progress).
 4. Before VLM: try **tree-first** on the same dump — `tree_hints` and/or「quoted」labels in
-   the goal; `resolve_tap_target` (clickable / ancestor, reject bottom chrome) →
+   the goal; `resolve_tap_target` (clickable / ancestor, reject bottom chrome; **focus vs
+   submit**: for 搜索/请输入/… prefer EditText/search-box over short Button「搜索」) →
    `via=tree_shortcut` (`grounder_ms=0`; PNG already paid this step, unused by Grounder).
 5. When VLM is required: reuse the step’s PNG (no second capture). `cost_report` shows
    observe split (`screenshot_ms` / `xml_ms` / modes). Dump failures degrade full → `shot`

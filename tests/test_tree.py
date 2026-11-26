@@ -4,7 +4,10 @@ from mano_android_use.run_loop import screen_signature
 from mano_android_use.tree import (
     compact_nodes,
     find_by_text,
+    is_input_like,
+    is_submit_control,
     label_index,
+    looks_like_focus_query,
     resolve_tap_target,
     screen_digest_labels,
     summarize,
@@ -112,3 +115,71 @@ def test_resolve_tap_rejects_didi_daijiao_overlay():
     # Center should sit in the car-row band, not the half-width 代叫 chip.
     assert 168 <= int(hit["x"]) <= 1056
     assert 2028 <= int(hit["y"]) <= 2185
+
+
+def test_focus_query_helpers():
+    assert looks_like_focus_query("搜索")
+    assert looks_like_focus_query("请输入商品名")
+    assert looks_like_focus_query("search")
+    assert not looks_like_focus_query("加入购物车")
+    assert not looks_like_focus_query("选规格")
+    assert is_input_like({"class": "EditText", "text": "搜索商家"})
+    assert is_input_like(
+        {"class": "ViewGroup", "resource_id": "com.app:id/search_box", "text": None}
+    )
+    assert is_submit_control({"class": "Button", "text": "搜索"}, "搜索")
+    assert not is_submit_control({"class": "Button", "text": "加入购物车"}, "加入购物车")
+
+
+def test_resolve_tap_prefers_search_field_over_submit_button():
+    """Hint「搜索」must focus the field, not press submit (default-term search)."""
+    xml = (FIXTURES / "meituan_search_bar.xml").read_text(encoding="utf-8")
+    pkg = "com.sankuai.meituan"
+    hit = resolve_tap_target(xml, "搜索", package=pkg)
+    assert hit is not None
+    h = hit.get("hit") or {}
+    cls = str(h.get("class") or "")
+    text = str(h.get("text") or "")
+    rid = str(h.get("resource_id") or "")
+    assert text != "搜索" or cls != "Button"
+    assert "search_btn" not in rid
+    assert cls in {"EditText", "ViewGroup"} or "search" in rid.lower()
+    # Field / bar center is left of the submit Button (~945).
+    assert int(hit["x"]) < 880
+
+
+def test_resolve_tap_button_first_still_prefers_edittext():
+    """Even when Button「搜索」precedes EditText in document order."""
+    xml = """<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
+<hierarchy rotation="0">
+  <node class="android.widget.FrameLayout" package="com.demo" bounds="[0,0][1080,2400]">
+    <node class="android.widget.Button" text="搜索" clickable="true"
+          bounds="[900,100][1000,180]" package="com.demo"/>
+    <node class="android.widget.EditText" text="搜索商家" clickable="true"
+          bounds="[100,100][880,180]" package="com.demo"
+          resource-id="com.demo:id/search_edit"/>
+  </node>
+</hierarchy>
+"""
+    hit = resolve_tap_target(xml, "搜索", package="com.demo")
+    assert hit is not None
+    assert (hit.get("hit") or {}).get("class") == "EditText"
+    assert int(hit["x"]) < 900
+
+
+def test_resolve_tap_keeps_action_button():
+    """Long action labels are not focus-routed away from their Button."""
+    xml = """<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
+<hierarchy rotation="0">
+  <node class="android.widget.FrameLayout" package="com.demo" bounds="[0,0][1080,2400]">
+    <node class="android.widget.EditText" text="搜索商家" clickable="true"
+          bounds="[100,100][900,180]" package="com.demo"/>
+    <node class="android.widget.Button" text="加入购物车" clickable="true"
+          bounds="[100,2000][980,2200]" package="com.demo"/>
+  </node>
+</hierarchy>
+"""
+    hit = resolve_tap_target(xml, "加入购物车", package="com.demo")
+    assert hit is not None
+    assert (hit.get("hit") or {}).get("text") == "加入购物车"
+    assert (hit.get("hit") or {}).get("class") == "Button"
