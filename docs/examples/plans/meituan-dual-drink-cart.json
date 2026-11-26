@@ -1,0 +1,75 @@
+{
+  "id": "meituan-dual-drink-cart",
+  "role": "production",
+  "description": "PRODUCTION Meituan dual-SKU anti-redo: two drinks → cart, stop before pay. Phase P1: A enter-store must see menu evidence (选规格/请输入商品名/cart chrome) — bare「点菜」tab is NOT DONE. Optional A2_open_menu exposes specs via 外送/scroll. Replace tree_hints every acquire (SKU-first). Stage C/D require「已添加2件». Terminal D: labels_all 去结算+已添加2件. Cursor: N× short android_run via slots, not one fat android_run_plan.",
+  "goal_card": {
+    "intent": "点两杯饮品并停在可结算购物车",
+    "params": {
+      "items": ["柠檬茶", "奶茶"],
+      "unit": "dual",
+      "stop_before_pay": true
+    },
+    "package": "com.sankuai.meituan",
+    "forbidden": ["支付", "提交订单", "马上抢", "HOME", "force_stop"],
+    "stop_when": ["去结算", "已添加2件"]
+  },
+  "stages": [
+    {
+      "id": "A_enter_store",
+      "package": "com.sankuai.meituan",
+      "max_steps": 10,
+      "tree_hints": ["外卖", "搜索", "柠檬茶"],
+      "goal": "打开美团外卖，搜索「柠檬茶」并进入一家可点单杯饮品的商家菜单页（须见「选规格」或店内「请输入商品名」，或已见购物车「去结算/已添加」）。店头仅「点菜」选中不算进店成功。不要支付。",
+      "success_check": {
+        "package": "com.sankuai.meituan",
+        "labels_any": ["选规格", "请输入商品名", "去结算", "已添加"],
+        "forbid_labels": ["立即支付", "确认支付"]
+      }
+    },
+    {
+      "id": "A2_open_menu",
+      "max_steps": 8,
+      "tree_hints": ["外送", "选规格", "请输入商品名"],
+      "goal": "已在商家页但菜单未露时：点「外送」或上滑/滑动，直到出现「选规格」或店内「请输入商品名」。不要支付、不要选规格加购。",
+      "success_check": {
+        "package": "com.sankuai.meituan",
+        "labels_any": ["选规格", "请输入商品名"],
+        "forbid_labels": ["立即支付", "确认支付"]
+      }
+    },
+    {
+      "id": "B_add_lemon_tea",
+      "max_steps": 10,
+      "tree_hints": ["柠檬茶", "手打柠檬", "选规格", "加入购物车"],
+      "goal": "在当前店内为第一杯「柠檬茶/手打柠檬」点「选规格」，默认冰/糖后「加入购物车」。成功见「已添加1件」或去结算。不要去结算进支付、不要马上抢。",
+      "success_check": {
+        "package": "com.sankuai.meituan",
+        "labels_any": ["已添加1件", "已添加 1 件"],
+        "forbid_labels": ["立即支付", "确认支付"]
+      }
+    },
+    {
+      "id": "C_add_second_drink",
+      "max_steps": 10,
+      "tree_hints": ["奶茶", "选规格", "加入购物车"],
+      "goal": "在同一店内再加第二杯「奶茶」或店内另一单杯饮品：换用本段 tree_hints，点该品「选规格」再「加入购物车」。成功必须见「已添加2件」。不要重做第一杯柠檬茶的选规格。不要去结算、不要支付。",
+      "success_check": {
+        "package": "com.sankuai.meituan",
+        "labels_any": ["已添加2件", "已添加 2 件"],
+        "forbid_labels": ["立即支付", "确认支付"]
+      }
+    },
+    {
+      "id": "D_verify_cart",
+      "max_steps": 6,
+      "tree_hints": [],
+      "goal": "只核对购物车：可见「去结算」与「已添加2件」，且能看到柠檬茶与第二杯饮品相关品名。不要再点选规格或加入购物车，不要点去结算进入支付。",
+      "success_check": {
+        "package": "com.sankuai.meituan",
+        "labels_all": ["去结算", "已添加2件"],
+        "labels_any": ["柠檬茶", "奶茶", "手打柠檬"],
+        "forbid_labels": ["立即支付", "确认支付"]
+      }
+    }
+  ]
+}

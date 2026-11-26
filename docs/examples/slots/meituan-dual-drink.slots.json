@@ -1,0 +1,87 @@
+{
+  "id": "meituan-dual-drink-slots",
+  "description": "Host SlotSpec overlay for dual-drink cart. Phase P1: A rejects bare「点菜」; optional A2_open_menu when store chrome lacks 选规格. After each acquire, on_done writes sku_keys + bans. Host: after STUCK find(done_when) then replace hints before next short run.",
+  "slots": [
+    {
+      "id": "A_enter_store",
+      "package": "com.sankuai.meituan",
+      "max_steps": 10,
+      "hints": ["外卖", "搜索", "柠檬茶"],
+      "goal": "打开美团外卖，搜索「柠檬茶」并进入一家可点单杯饮品的商家菜单页（须见「选规格」或店内「请输入商品名」，或已见购物车「去结算/已添加」）。店头仅「点菜」选中不算进店成功。不要支付。",
+      "done_when": {
+        "package": "com.sankuai.meituan",
+        "labels_any": ["选规格", "请输入商品名", "去结算", "已添加"],
+        "forbid_labels": ["立即支付", "确认支付"]
+      },
+      "affordances": ["type_query", "tap_other", "navigate_back"]
+    },
+    {
+      "id": "A2_open_menu",
+      "depends_on": ["A_enter_store"],
+      "max_steps": 8,
+      "hints": ["外送", "选规格", "请输入商品名"],
+      "goal": "已在商家页但菜单未露时：点「外送」或上滑/滑动，直到出现「选规格」或店内「请输入商品名」。不要支付、不要选规格加购。若 find 已见选规格，Host 可直接 on_done 跳过本槽。",
+      "done_when": {
+        "package": "com.sankuai.meituan",
+        "labels_any": ["选规格", "请输入商品名"],
+        "forbid_labels": ["立即支付", "确认支付"]
+      },
+      "affordances": ["tap_other", "swipe", "wait"]
+    },
+    {
+      "id": "B_add_lemon_tea",
+      "depends_on": ["A2_open_menu"],
+      "max_steps": 10,
+      "hints": ["柠檬茶", "手打柠檬", "选规格", "加入购物车"],
+      "goal": "在当前店内为第一杯「柠檬茶/手打柠檬」点「选规格」，默认冰/糖后「加入购物车」。成功见「已添加1件」。不要去结算进支付、不要马上抢。",
+      "done_when": {
+        "package": "com.sankuai.meituan",
+        "labels_any": ["已添加1件", "已添加 1 件"],
+        "forbid_labels": ["立即支付", "确认支付"]
+      },
+      "forbid_when_done": {
+        "sku_keys": ["柠檬茶"],
+        "cart_count": 1,
+        "banned_hint_labels": ["已添加", "去结算", "马上抢"]
+      },
+      "affordances": ["open_spec", "confirm_add"]
+    },
+    {
+      "id": "C_add_second_drink",
+      "depends_on": ["B_add_lemon_tea"],
+      "max_steps": 10,
+      "hints": ["奶茶", "选规格", "加入购物车"],
+      "goal": "在同一店内再加第二杯「奶茶」或店内另一单杯饮品：换用本段 hints，点该品「选规格」再「加入购物车」。成功必须见「已添加2件」。不要重做第一杯。不要去结算、不要支付。",
+      "done_when": {
+        "package": "com.sankuai.meituan",
+        "labels_any": ["已添加2件", "已添加 2 件"],
+        "forbid_labels": ["立即支付", "确认支付"]
+      },
+      "forbid_when_done": {
+        "sku_keys": ["奶茶"],
+        "cart_count": 2,
+        "banned_act_classes": ["open_spec", "confirm_add"],
+        "banned_hint_labels": ["已添加", "去结算", "马上抢", "选规格", "加入购物车"]
+      },
+      "affordances": ["open_spec", "confirm_add"]
+    },
+    {
+      "id": "D_verify_cart",
+      "depends_on": ["C_add_second_drink"],
+      "max_steps": 6,
+      "hints": [],
+      "goal": "只核对购物车：可见「去结算」与「已添加2件」，且能看到柠檬茶与第二杯饮品相关品名。不要再点选规格或加入购物车，不要点去结算进入支付。",
+      "done_when": {
+        "package": "com.sankuai.meituan",
+        "labels_all": ["去结算", "已添加2件"],
+        "labels_any": ["柠檬茶", "奶茶", "手打柠檬"],
+        "forbid_labels": ["立即支付", "确认支付"]
+      },
+      "forbid_when_done": {
+        "banned_act_classes": ["open_spec", "confirm_add", "checkout"],
+        "banned_hint_labels": ["选规格", "加入购物车", "去结算", "马上抢"]
+      },
+      "affordances": ["open_cart", "navigate_back", "wait"]
+    }
+  ]
+}

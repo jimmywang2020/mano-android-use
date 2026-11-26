@@ -1,0 +1,49 @@
+{
+  "id": "meituan-lemon-tea-cart",
+  "role": "production",
+  "description": "PRODUCTION Meituan anti-redo template: single-cup lemon tea → cart, stop before pay. Stages replace tree_hints each time (never put 已添加/去结算 in hints). Terminal C requires world-state evidence (去结算+已添加) — menu-only product name must not GOAL. After B, Host should seed progress_json world.sku_keys (+ optional policy bans) so M2 Guard NO_OPs redo. If cart already has foreign SKUs, clear first. Price band ~¥15 is Host/human guidance; mau has no UNSAT stop.",
+  "goal_card": {
+    "intent": "点一杯柠檬茶并停在可结算购物车",
+    "params": {"item": "柠檬茶", "unit": "single", "price_band_hint": "~15"},
+    "package": "com.sankuai.meituan",
+    "forbidden": ["支付", "提交订单", "马上抢", "HOME", "force_stop"],
+    "stop_when": ["去结算", "已添加", "柠檬茶"]
+  },
+  "stages": [
+    {
+      "id": "A_enter_store",
+      "package": "com.sankuai.meituan",
+      "max_steps": 10,
+      "tree_hints": ["外卖", "搜索", "柠檬茶"],
+      "goal": "打开美团外卖，关闭弹窗，搜索「柠檬茶」并进入一家手打柠檬茶/柠檬茶商家菜单页（须能看到「选规格」或店内「请输入商品名」；店头仅「点菜」选中不算）。不要双杯套餐结算，不要支付。",
+      "success_check": {
+        "package": "com.sankuai.meituan",
+        "labels_any": ["选规格", "请输入商品名", "去结算", "已添加"],
+        "forbid_labels": ["立即支付", "确认支付"]
+      }
+    },
+    {
+      "id": "B_add_single_cup",
+      "max_steps": 10,
+      "tree_hints": ["柠檬茶", "手打柠檬", "选规格", "加入购物车"],
+      "goal": "在当前店内选一杯单杯柠檬茶（不要双杯套餐）：点该品「选规格」，默认冰/糖后点「加入购物车」。看到加购成功（已添加/去结算）即可。不要点「去结算」、不要支付、不要点马上抢。",
+      "success_check": {
+        "package": "com.sankuai.meituan",
+        "labels_any": ["已添加", "去结算"],
+        "forbid_labels": ["立即支付", "确认支付"]
+      }
+    },
+    {
+      "id": "C_verify_cart",
+      "max_steps": 6,
+      "tree_hints": [],
+      "goal": "只确认购物车已有柠檬茶且可见「去结算」与「已添加」：可点开购物车面板查看品名与件数。不要再点「选规格」或「加入购物车」，不要点「去结算」进入支付，不要支付。",
+      "success_check": {
+        "package": "com.sankuai.meituan",
+        "labels_all": ["去结算", "已添加"],
+        "labels_any": ["柠檬茶", "手打柠檬", "单丛"],
+        "forbid_labels": ["立即支付", "确认支付"]
+      }
+    }
+  ]
+}
