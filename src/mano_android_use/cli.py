@@ -139,11 +139,61 @@ def main(argv: list[str] | None = None) -> int:
         dest="as_json",
         help="Print full trace JSON instead of a table",
     )
+    p_kpi = sub.add_parser(
+        "kpi",
+        help="Anti-redo KPIs (guard_noop / redo_same_act_class / l0_share) from runs/<id>",
+    )
+    p_kpi.add_argument(
+        "target",
+        nargs="?",
+        default="",
+        help="Run dir, trace.json, or journal.jsonl (default: newest under --runs)",
+    )
+    p_kpi.add_argument(
+        "--json",
+        action="store_true",
+        dest="as_json",
+        help="Print KPI JSON instead of a table",
+    )
+    p_resume = sub.add_parser(
+        "resume-from-run",
+        help="Phase O4: draft TaskState/ResumeSpec from journal after lost MCP (-32001)",
+    )
+    p_resume.add_argument(
+        "target",
+        nargs="?",
+        default="",
+        help="Run dir or journal.jsonl (default: newest under --runs)",
+    )
+    p_resume.add_argument(
+        "--slots",
+        default="",
+        help="Optional slots/plan JSON for heuristic completed_slots (needs_confirm)",
+    )
+    p_resume.add_argument(
+        "--goal",
+        default="",
+        help="Optional next-slot goal to embed in resume.do",
+    )
+    p_slot = sub.add_parser(
+        "slot-next",
+        help="Phase P4/O3: peek next SlotSpec args + suggested find needles (no device)",
+    )
+    p_slot.add_argument(
+        "slots_path",
+        help="slots JSON or run-plan JSON (stages → slots)",
+    )
+    p_slot.add_argument(
+        "--progress-json",
+        default="",
+        help="Host TaskState.progress JSON (completed_slots / world / policy)",
+    )
 
     args = parser.parse_args(argv)
 
     # Read-only: no device session required.
     if args.cmd == "trace":
+        from .kpi import format_kpi_table, kpis_from_spans
         from .trace_report import format_trace_table, load_trace, resolve_trace_target
 
         try:
@@ -152,10 +202,65 @@ def main(argv: list[str] | None = None) -> int:
         except FileNotFoundError as exc:
             _print({"ok": False, "code": "TRACE_NOT_FOUND", "reason": str(exc)})
             return 1
+        kpis = kpis_from_spans(list(doc.get("steps") or []))
         if args.as_json:
-            _print(doc)
+            out = dict(doc)
+            out["kpis"] = kpis
+            _print(out)
         else:
             print(format_trace_table(doc))
+            print()
+            print(format_kpi_table(kpis))
+        return 0
+    if args.cmd == "kpi":
+        from .kpi import format_kpi_table, kpis_from_spans
+        from .trace_report import load_trace, resolve_trace_target
+
+        try:
+            run_dir = resolve_trace_target(args.target or None, runs_root=args.runs)
+            doc = load_trace(run_dir)
+        except FileNotFoundError as exc:
+            _print({"ok": False, "code": "TRACE_NOT_FOUND", "reason": str(exc)})
+            return 1
+        kpis = kpis_from_spans(list(doc.get("steps") or []))
+        if args.as_json:
+            _print({"run_dir": str(run_dir), "kpis": kpis})
+        else:
+            print(format_kpi_table(kpis))
+        return 0
+    if args.cmd == "resume-from-run":
+        from .resume_from_run import resume_from_run
+
+        out = resume_from_run(
+            args.target or None,
+            runs_root=args.runs,
+            slots_path=args.slots or None,
+            goal=args.goal or "",
+        )
+        _print(out)
+        return 0 if out.get("ok") else 1
+    if args.cmd == "slot-next":
+        from .host_slots import load_slot_graph, slot_peek
+
+        prog: dict = {}
+        raw = (args.progress_json or "").strip()
+        if raw:
+            try:
+                loaded = json.loads(raw)
+                if isinstance(loaded, dict):
+                    prog = loaded
+            except json.JSONDecodeError as exc:
+                _print({"ok": False, "code": "BAD_PROGRESS_JSON", "reason": str(exc)})
+                return 1
+        try:
+            graph = load_slot_graph(args.slots_path)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            _print({"ok": False, "code": "SLOT_LOAD_ERROR", "reason": str(exc)})
+            return 1
+        out = slot_peek(graph, prog)
+        out["ok"] = True
+        out["graph_id"] = graph.id
+        _print(out)
         return 0
 
     from mano.errors import ManoError

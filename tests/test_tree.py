@@ -1,7 +1,14 @@
 from pathlib import Path
 
 from mano_android_use.run_loop import screen_signature
-from mano_android_use.tree import compact_nodes, find_by_text, summarize
+from mano_android_use.tree import (
+    compact_nodes,
+    find_by_text,
+    label_index,
+    resolve_tap_target,
+    screen_digest_labels,
+    summarize,
+)
 
 SAMPLE = """<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
 <hierarchy rotation="0">
@@ -53,3 +60,55 @@ def test_signature_distinguishes_home_vs_fare():
     assert sig_home != sig_fare
     assert "一口价" in sig_fare or "78.9" in sig_fare
     assert "您想去哪里" in sig_home or "输入目的地" in sig_home
+
+
+def test_compact_digest_misses_meituan_cart_bar_but_label_index_hits():
+    """N0/N1: document-order digest drops bottom cart; label_index keeps it."""
+    xml = (FIXTURES / "meituan_store_deep_header.xml").read_text(encoding="utf-8")
+    pkg = "com.sankuai.meituan"
+    digest = " ".join(
+        screen_digest_labels(xml, package=pkg, max_labels=40, max_nodes=160)
+    )
+    assert "去结算" not in digest
+    assert "已添加" not in digest
+    assert find_by_text(xml, "去结算", package=pkg)
+
+    idx = " ".join(
+        label_index(
+            xml,
+            package=pkg,
+            needles=["去结算", "已添加"],
+        )
+    )
+    assert "去结算" in idx
+    assert "已添加" in idx
+
+
+def test_label_index_recovers_didi_unfinished_carpool():
+    xml = (FIXTURES / "didi_fare_carpool_overlay.xml").read_text(encoding="utf-8")
+    pkg = "com.sdu.didi.psnger"
+    digest = " ".join(
+        screen_digest_labels(xml, package=pkg, max_labels=40, max_nodes=160)
+    )
+    assert "未拼成" not in digest
+    idx = " ".join(
+        label_index(xml, package=pkg, needles=["未拼成", "一口价", "特价拼车"])
+    )
+    assert "未拼成" in idx
+    assert "一口价" in idx
+
+
+def test_resolve_tap_rejects_didi_daijiao_overlay():
+    """特价拼车 must not resolve to operation_view / 代叫 strip."""
+    xml = (FIXTURES / "didi_fare_carpool_overlay.xml").read_text(encoding="utf-8")
+    pkg = "com.sdu.didi.psnger"
+    hit = resolve_tap_target(xml, "特价拼车", package=pkg)
+    assert hit is not None
+    rid = str((hit.get("hit") or {}).get("resource_id") or "")
+    desc = str((hit.get("hit") or {}).get("desc") or "")
+    text = str((hit.get("hit") or {}).get("text") or "")
+    assert "operation_view" not in rid
+    assert "代叫" not in desc and "代叫" not in text
+    # Center should sit in the car-row band, not the half-width 代叫 chip.
+    assert 168 <= int(hit["x"]) <= 1056
+    assert 2028 <= int(hit["y"]) <= 2185

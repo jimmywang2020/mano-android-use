@@ -36,7 +36,7 @@
     {
       "id": "C_read_carpool_and_special",
       "max_steps": 12,
-      "tree_hints": ["特价拼车", "极速拼车", "惊喜特价", "特惠快车", "拼车", "特价"],
+      "tree_hints": ["拼车", "特价"],
       "goal": "停在报价/车型列表，确认同时能看到：拼车价（未拼成）以及不拼车的特价/特惠一口价（惊喜特价或特惠快车）。可点左侧分类浏览，但不要点呼叫、确认叫车或支付。",
       "success_check": {
         "package": "com.sdu.didi.psnger",

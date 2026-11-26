@@ -6,10 +6,10 @@ from typing import Any
 
 # Short playbook echoed into MCP/CLI JSON so hosts see it without opening docs.
 PLAYBOOK_LINES: tuple[str, ...] = (
-    "Default path: ready → android_run or android_run_plan (Host picks goal; mau loops). Do not chain propose_action for multi-step goals.",
-    "MCP: keep each android_run short (default max_steps=10, ~90s soft budget). On TIME_BUDGET/STUCK, read continue_hint/resume (ResumeSpec): fill do.* — omit package=, cold_start=false; honor dont[] (no HOME/force_stop/rewrite_goal). Do not switch the main loop to L0/propose.",
-    "Goals: never include payment/submit button copy (e.g. 立即支付); stop-before-pay wording only. Meituan-class → short staged goals (搜 / 规格加购 / 凑单).",
-    "Unchanged screen: mau skips VLM (recover BACK once, then STUCK). After type/click/swipe, a short act grace skips BACK. Pass tree_hints or「quoted」labels for tree-first taps before VLM.",
+    "Default path (Cursor): ready → N× short android_run (one slot/stage each; host_slots). Prefer CLI mau run-plan for long plans — fat MCP android_run_plan often hits Host -32001. Do not chain propose_action for multi-step goals.",
+    "MCP: keep each android_run short (default max_steps=10, ~90s soft budget). On TIME_BUDGET/STUCK: find(done_when) or slot_peek → replace tree_hints if page wrong → short resume (omit package=, cold_start=false). On -32001: resume_from_run → confirm 件数 → short resume. Never HOME/force_stop/rewrite_goal/L0 main loop.",
+    "Goals: never include payment/submit button copy (e.g. 立即支付); stop-before-pay wording only. Meituan: A needs 选规格/请输入商品名 (not bare 点菜); dual-drink C/D need 已添加2件. Acquire hints SKU-first. Short stages (搜 / 露菜单 / 规格加购).",
+    "Unchanged screen: mau skips VLM (recover BACK once, then STUCK). tree_shortcut miss (no screen change / Guard NO_OP) falls through to VLM same step. Pass SKU-first tree_hints or「quoted」labels.",
     "Prefer package= (warm ensure) or launch_app (cold) when the app is installed; avoid browser+中文 type.",
     "Call ready before Chinese type_text; if text_backend.available is false, install OpenATX AdbKeyboard.",
     "APK install / ColorOS「继续安装」dialogs: use observe+tap or a human — not android_run.",

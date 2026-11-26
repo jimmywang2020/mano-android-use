@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from .tree import screen_digest_labels
+from .tree import label_index
 
 
 @dataclass
@@ -24,8 +24,9 @@ class SuccessCheck:
     - ``use_xml``: if True, search full accessibility XML (noisy; can false-hit
       buried promo nodes).
     - ``use_foreground_tree``: if True (default), also search systemui-filtered
-      compact labels from XML so ColorOS status-bar noise cannot hide real UI.
-      Ignored when ``use_xml`` is True (full XML already covers it).
+      :func:`label_index` labels (y-banded, text-first, needle force-keep) so
+      deep trees still surface cart/fare bars. Not the Host ``compact_nodes``
+      prefix. Ignored when ``use_xml`` is True (full XML already covers it).
     """
 
     package: str | None = None
@@ -115,7 +116,14 @@ def _search_blob(
         return f"{blob}\n{xml}"
     if check.use_foreground_tree and xml:
         fg = (package or check.package or "").strip() or None
-        labels = screen_digest_labels(xml, package=fg, max_labels=40, max_nodes=160)
+        needles = list(check.labels_any) + list(check.labels_all) + list(check.forbid_labels)
+        labels = label_index(
+            xml,
+            package=fg,
+            max_labels=96,
+            per_band=36,
+            needles=needles,
+        )
         if labels:
             blob = f"{blob}\n" + " ".join(labels)
     return blob
@@ -184,6 +192,6 @@ def progress_from_verdict(
         # Common task bits for Host TaskState
         if lab in {"元", "一口价", "预估", "到手约"} or "元" in lab or "一口价" in lab:
             out["fare_seen"] = True
-        if lab in {"加入购物车", "去结算", "结算", "购物车"}:
+        if lab in {"加入购物车", "去结算", "结算", "购物车"} or "已添加" in lab:
             out["cart_seen"] = True
     return out

@@ -87,7 +87,7 @@ Every `android_run` / `android_run_plan` return includes a stable **`task_patch`
 
 | Field | Role |
 |-------|------|
-| `progress` / `plan_progress` | OR-merge facts (`fare_seen`, `goal_matched`, …) |
+| `progress` / `plan_progress` | OR-merge facts — prefer `completed_slots` / `world` / `policy` (see playbook **Progress contract** + **Guard**); legacy `fare_seen` / `goal_matched` still OK. Guard NO_OPs redo add/spec when `world.sku_keys` matches |
 | `resume` | ResumeSpec — `next_actor=done` or `host` + `do` / `dont` |
 | `screen_digest` / `evidence_refs` | Filtered labels + screenshot/xml paths |
 
@@ -125,6 +125,9 @@ dest-name alone on a search sheet) causes false `GOAL_REACHED`.
 | Fixtures | Do **not** treat `role: fixture` plans as production truth |
 
 DiDi recipe: [`docs/recipes/didi.md`](docs/recipes/didi.md).  
+Meituan cart / DONE evidence: [`docs/recipes/meituan.md`](docs/recipes/meituan.md).  
+Host SlotSpec thin lib: [`docs/examples/slots/`](docs/examples/slots/) (`mano_android_use.host_slots`).  
+Anti-redo KPIs: `mau kpi [runs/<id>]` / `cost_report.kpis`.  
 Production plan: [`docs/examples/plans/didi-airport-carpool-vs-special.json`](docs/examples/plans/didi-airport-carpool-vs-special.json).  
 Fixture only: [`docs/examples/plans/ab-didi-xiangmihu-fare.json`](docs/examples/plans/ab-didi-xiangmihu-fare.json).
 
@@ -157,7 +160,9 @@ uv run mau run-plan docs/examples/plans/didi-airport-carpool-vs-special.json
 | `mau run "goal"` | **Primary:** bounded loop; tree-first + unchanged-screen VLM skip |
 | `mau run-plan <plan.json>` | **Long tasks:** staged A/B/C plan (cross-stage `plan_progress` OR-merge) |
 | `mau doctor` / `ready` | Device health + tips (`screen`, `text_backend`, `observe_backend`) |
-| `mau trace [runs/<id>]` | Step timing/token table (`via` + `by_via`) from `trace.json` / journal (`--json`) |
+| `mau trace [runs/<id>]` | Step timing/token table (`via` + `by_via`) + KPI block from `trace.json` / journal (`--json`) |
+| `mau kpi [runs/<id>]` | Anti-redo KPIs only (`guard_noop`, `redo_same_act_class`, `l0_share`, …) |
+| `mau resume-from-run [runs/<id>]` | After lost MCP: draft TaskState from journal (`--slots` optional) |
 | **`mau run` flags** | |
 | `--package` / `--cold-start` | Warm ensure by default; cold only for true relaunch |
 | `--success-package` / `--success-label` / `--success-label-all` | External success_check |
@@ -212,7 +217,7 @@ picks them up (Cursor’s tool-schema cache may lag; calls can still work).
 
 | Group | Tools |
 |-------|--------|
-| Goal / orchestration | `android_run`, `android_run_plan`, `ready`, `doctor`, `launch_app`, `journal_tail` |
+| Goal / orchestration | `android_run`, `android_run_plan`, `ready`, `doctor`, `launch_app`, `journal_tail`, `resume_from_run` |
 | L0 correction | `observe`, `find`, `tap`, `swipe`, `type_text`, `press_button` |
 | Debug | `propose_action` (`execute=true` deprecated; needs `MAU_ALLOW_PROPOSE_EXECUTE=1`) |
 

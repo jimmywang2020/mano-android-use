@@ -83,7 +83,7 @@ export MANO_DEVICE_SERIAL=<adb devices 中的串号>   # 如 192.168.x.x:port
 
 | 字段 | 作用 |
 |------|------|
-| `progress` / `plan_progress` | OR-merge 事实（`fare_seen`、`goal_matched`…） |
+| `progress` / `plan_progress` | OR-merge 事实 — 优先 `completed_slots` / `world` / `policy`（见 playbook **Progress contract** + **Guard**）；旧字段 `fare_seen` / `goal_matched` 仍可用。`world.sku_keys` 命中时 Guard 会对重复选规格/加购 NO_OP |
 | `resume` | ResumeSpec — `next_actor=done` 或 `host` + `do` / `dont` |
 | `screen_digest` / `evidence_refs` | 过滤后标签 + 截图/xml 路径 |
 
@@ -118,6 +118,9 @@ export MANO_DEVICE_SERIAL=<adb devices 中的串号>   # 如 192.168.x.x:port
 | 夹具 | **不要**把 `role: fixture` plan 当生产真理 |
 
 滴滴 recipe：[`docs/recipes/didi.md`](docs/recipes/didi.md)。  
+美团加购 / DONE 证据：[`docs/recipes/meituan.md`](docs/recipes/meituan.md)。  
+Host SlotSpec 薄库：[`docs/examples/slots/`](docs/examples/slots/)（`mano_android_use.host_slots`）。  
+反重做 KPI：`mau kpi [runs/<id>]` / `cost_report.kpis`。  
 生产 plan：[`docs/examples/plans/didi-airport-carpool-vs-special.json`](docs/examples/plans/didi-airport-carpool-vs-special.json)。  
 仅夹具：[`docs/examples/plans/ab-didi-xiangmihu-fare.json`](docs/examples/plans/ab-didi-xiangmihu-fare.json)。
 
@@ -150,7 +153,9 @@ uv run mau run-plan docs/examples/plans/didi-airport-carpool-vs-special.json
 | `mau run "goal"` | **主路径**：有界循环；tree-first + 同屏跳过 VLM |
 | `mau run-plan <plan.json>` | **长任务**：分阶段 A/B/C（跨 stage `plan_progress` OR-merge） |
 | `mau doctor` / `ready` | 设备健康 + tips（`screen`、`text_backend`、`observe_backend`） |
-| `mau trace [runs/<id>]` | 逐步耗时/token 表（`via` + `by_via`；`--json`） |
+| `mau trace [runs/<id>]` | 逐步耗时/token 表（`via` + `by_via`）+ KPI 块（`--json`） |
+| `mau kpi [runs/<id>]` | 反重做 KPI（`guard_noop`、`redo_same_act_class`、`l0_share`…） |
+| `mau resume-from-run [runs/<id>]` | MCP 丢包后：从 journal 草稿 TaskState（可选 `--slots`） |
 | **`mau run` 常用参数** | |
 | `--package` / `--cold-start` | 默认暖启动；仅真冷启时加 `--cold-start` |
 | `--success-package` / `--success-label` / `--success-label-all` | 外部 success_check |

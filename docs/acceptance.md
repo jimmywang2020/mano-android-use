@@ -88,15 +88,57 @@ production plans). Fill the human/MCP rows when re-verified on a live Host.
 - [x] MCP/CLI accept `progress_json` / `--progress-json` (OR-seed); plan OR-merges `plan_progress`
 - [x] `forbid_labels` / `success_forbid_labels` / `--success-forbid-label` block search-sheet false GOAL
 - [x] Production DiDi plans: `didi-airport-carpool-vs-special.json` (+ fengye aligned); fixture marked
-- [ ] **MCP live:** short run → merge `task_patch` → resume with `progress_json`, omit `package=`, `cold_start=false`
-- [ ] **Optional:** `MAU_OBSERVE_BACKEND=u2` same airport plan vs ADB (observe cost only)
-- [ ] Host reports `cost_report.narrative` after each run
+- [x] **M4 DONE evidence:** Meituan terminal `labels_all` includes `去结算`+`已添加`; dual-drink plan; `world_evidence.cart_count` suggest; unit false-GOAL on search-only name (`tests/test_world_evidence.py`, [`recipes/meituan.md`](recipes/meituan.md))
+- [x] **M5 KPIs (unit):** `cost_report.kpis` / `mau kpi` expose `guard_noop`, `redo_same_act_class`, `l0_as_main_loop_share_pct` (`tests/test_kpi.py`)
+- [x] **MCP live:** short run → merge `task_patch` → resume with `progress_json`, omit `package=`, `cold_start=false`
+- [x] **Host sign-off:** SlotSpec/plan 跑通美团双品 + 滴滴生产 plan；查 `mau kpi`（redo 低、无支付、无冷启主路径）
+- [x] **Optional:** `MAU_OBSERVE_BACKEND=u2` same airport plan vs ADB (observe cost only) — live runs used u2 already (`ready.observe_backend=u2`)
+- [x] Host reports `cost_report.narrative` after each run
+- [x] **Optional live:** lemon-tea / dual-drink plan terminal requires cart world evidence (not search list) — Host `find`「去结算」+「已添加2件」; compact digest alone missed bottom bar
 
 | Check | Date | Result | Notes |
 |-------|------|--------|-------|
-| MCP TaskState resume | | | |
-| Recipe gate (airport plan) | | | |
-| U2 opt-in (optional) | | | |
+| MCP TaskState resume | 2026-11-24 | PASS | Settings cold → WLAN resume: `progress_json` kept `completed_slots`; `omit_package`/`cold_start=false`; `l0_share=0`. Runs `20261124-145902-633fe6` → `…-fde36e` |
+| Recipe gate (airport plan) | 2026-11-24 | PASS* | DiDi `didi-airport-carpool-vs-special`: A+B `GOAL_REACHED`; B vetoed「请输入终点」false GOAL. C tree-shortcut into「代叫」→ `NEED_HUMAN` (SafetyGateway; no call/pay). Host `find` still saw「未拼成」+「一口价」. `mau kpi` redo=0 l0=0. Run `20261124-150521-c09d27` |
+| U2 opt-in (optional) | 2026-11-24 | PASS | Session already on u2; Meituan+DiDi plans observed via u2 |
+| Meituan dual-drink Host | 2026-11-24 | PASS* | Plan A GOAL / B STUCK (digest truncated); Host resume+L0「选规格」纠偏；Guard deny×2 on「去结算」; `find` 已添加2件+去结算 stop-before-pay. KPIs: plan redo=3 then resume redo=0 deny=2 l0=0. Runs `…-abcccb` / `…-f02922` / `…-0b95d1` |
+| Phase N label_index + safe shortcut | 2026-11-24 | PASS* | N0–N4 unit; CLI+MCP DiDi A/B/C GOAL no 代叫. **Meituan:** `label_index` tech PASS — verify run `154326-13f566` digest misses 去结算/已添加 but check matches (XML+shot: cart badge 1 + 去结算, 规格弹层仍开). **Dual-drink plan NOT PASS** — `154056-51197c` A/B real (进店+加1杯); C/D instant GOAL on same「已添加1件」screen (weak `labels_any`); never 2 SKUs. |
+
+## Phase O — Host Continuity (A short runs + B lost-MCP)
+
+See [`docs/plan-next.md`](plan-next.md) Phase O. A = prevent fat MCP; B = recover after `-32001`.
+
+- [x] **O0** Contract in plan-next + playbook「A vs B」
+- [x] **O1** Dual-drink C/D gates require「已添加2件」; unit `test_dual_drink_one_item_screen_fails_c_and_d`
+- [x] **O2** tips / MCP `android_run_plan` docstring / agent rule: Cursor → N× short `android_run`
+- [x] **O3** `mau slot-next` / MCP `slot_peek` (landed with Phase P4)
+- [x] **O4** `resume_from_run` (CLI+MCP; journal → draft TaskState; no GOAL-count→cart_count; also scans `step-*.xml`)
+- [x] **O5** Rule 2b / playbook point at `resume_from_run`
+- [x] **O6 Live:** dual-drink via short runs → 已添加2件+去结算; TIME_BUDGET short resume (A); CLI `resume_from_run` on cart=2. DiDi short stages: reuse N5 PASS (not re-run 2026-11-26).
+
+| Check | Date | Result | Notes |
+|-------|------|--------|-------|
+| O1 unit gates | 2026-11-26 | PASS | 1-item summary fails C/D; 2-item passes |
+| O4 resume_from_run unit | 2026-11-26 | PASS | `tests/test_resume_from_run.py` (+ XML fallback) |
+| O6 Meituan dual short-run | 2026-11-26 | PASS | N× short `android_run` (not fat plan). B `141333-093ba2` cart=1; C `141657-e0fbc6` cart=2; D `141727-4f393d` labels_all 去结算+已添加2件. Host `find` confirmed badge+去结算. Stop-before-pay. Mid C STUCK on 1-item correctly (O1 gate held). |
+| O6 lost-MCP / TIME_BUDGET resume | 2026-11-26 | PASS* | A `140740-46ca77` TIME_BUDGET → short resume omit package → GOAL `8a525c`/进 LINLEE. CLI `resume_from_run` on C run → cart_count=2 from XML (journal compact missed badge). **MCP tool `resume_from_run` not in Cursor catalog after reload** — use CLI until Host re-discovers tools. |
+| O6 DiDi short stages | 2026-11-26 | SKIP | Reuse Phase N DiDi MCP PASS; not re-run this session. |
+
+## Phase P — Cut spin (wrong-page / soft-gate / dull hints)
+
+See [`docs/plan-next.md`](plan-next.md) Phase P.
+
+- [x] **P0** Contract: plan-next + playbook「spin budget」+ this table
+- [x] **P1** Dual-drink A: no bare「点菜」; menu evidence; `A2_open_menu`; unit `test_dual_drink_store_header_diancai_not_a_done`
+- [x] **P2** SKU-first acquire hints; rule/tips STUCK → find/`slot_peek` → replace hints
+- [x] **P3** `tree_shortcut` miss (no screen change / Guard NO_OP) → same-step VLM; unit + KPI `tree_shortcut_miss`
+- [x] **P4** `mau slot-next` / MCP `slot_peek` (O3)
+- [x] **P5 Live:** dual-drink N× short; mau ≪ 5.5min; no false 1-item PASS (2026-11-26 reload)
+
+| Check | Date | Result | Notes |
+|-------|------|--------|-------|
+| P1–P4 unit | 2026-11-26 | PASS | world_evidence / host_slots / run_loop / resume_from_run / guard / kpi (52) |
+| P5 Meituan dual re-measure | 2026-11-26 | PASS* | **Mechanics OK / SKU intent miss.** Reload MCP. A `152528`→**爷爷不泡茶** (not LINLEE); A2 `152714` GOAL+`tree_shortcut_miss`; B `152804`→Host find 1件; C `153212` GOAL 34s; D `153300` 去结算+已添加2件. mau≈3.7min≪5.5. **Actual cart SKUs: 兰香青柠 + 青提柠檬水** — not recipe `柠檬茶`+`奶茶` (C never added 奶茶). Gate「2件+停支付前」成立；配方品类意图未验收。 |
 
 ## Phase 6 — B-path `android_run(goal)` (no LangGraph)
 

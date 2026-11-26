@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .progress import or_merge_progress, progress_prompt_lines
 from .run_loop import (
     TERMINAL_OK,
     TERMINAL_TIME_BUDGET,
@@ -24,17 +25,6 @@ from .run_loop import (
 from .session import DeviceSession
 from .success_check import SuccessCheck
 from .trace_report import plan_cost_report
-
-
-def _or_merge_progress(
-    base: dict[str, Any] | None,
-    extra: dict[str, Any] | None,
-) -> dict[str, Any]:
-    out = dict(base or {})
-    for k, v in (extra or {}).items():
-        if v:
-            out[k] = v
-    return out
 
 
 @dataclass
@@ -71,16 +61,8 @@ class PlanState:
             "- Prefer the smallest next UI action from the current screen toward THIS stage goal only.",
             "- Ignore ads (dismiss/back); never pay or submit an order.",
         ]
-        if self.progress:
-            bits = [k for k, v in self.progress.items() if v][:16]
-            if bits:
-                lines.append(
-                    "- Accumulated progress bits (do not undo): " + ", ".join(bits) + "."
-                )
-            if self.progress.get("fare_seen") or self.progress.get("cart_seen"):
-                lines.append(
-                    "- Fare/cart already seen earlier in this plan — do not BACK/HOME away."
-                )
+        for prompt_line in progress_prompt_lines(self.progress):
+            lines.append("- " + prompt_line)
         return "\n".join(lines)
 
 
@@ -268,7 +250,7 @@ def android_run_plan(
         state.last_summary = result.last_summary or state.last_summary
         state.last_package = result.package or state.last_package
         state.last_reason = result.reason or state.last_reason
-        state.progress = _or_merge_progress(state.progress, result.progress)
+        state.progress = or_merge_progress(state.progress, result.progress)
 
         if result.status != TERMINAL_OK:
             remaining = [s.id for s in stages[idx + 1 :]]

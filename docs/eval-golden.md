@@ -26,6 +26,12 @@ uv run mau ready                               # screen.awake, tips[]
 | 7 | After any `mau run`: inspect `runs/<id>/journal.jsonl` + `trace.json` | at least one `event=android_run_step` with ms fields; `trace.json` `totals.step_ms` ≥ 0; `mau trace runs/<id>` prints a table with `via` |
 | 8 | MCP soft budget (unit / slow mock): `android_run(..., wall_budget_ms=…)` | `TIME_BUDGET` + `cost_report` + `task_patch` / `continue_hint` (not an empty Host timeout) |
 | 8b | Host resume seed: `mau run ... --progress-json '{"fare_seen":true}' --wall-budget-ms …` or MCP `progress_json` | returned `progress` / `task_patch.progress` keeps seeded bits (OR-merge) |
+| 8c | M1 contract seed: `--progress-json '{"completed_slots":["A"],"world":{"cart_count":1,"sku_keys":["柠檬茶"]},"policy":{"banned_hint_labels":["已添加"]}}'` | returned progress unions slots/skus; `cart_count` max; prompt/PlanState mentions completed slots / banned hints (`tests/test_progress.py`) |
+| 8d | M2 Guard: seed `world.sku_keys` + tree_hints `选规格` while goal names that SKU | no device tap; journal/cost `skip_reason=guard_noop` (`tests/test_guard.py`) |
+| 8e | M4 DONE gates (unit): search blob with only「柠檬茶」vs cart blob with「去结算」+「已添加」 | search fails terminal `labels_all`; cart passes (`tests/test_world_evidence.py`) |
+| 8f | Optional live: `mau run-plan docs/examples/plans/meituan-lemon-tea-cart.json` (or dual-drink) | terminal stage needs cart world evidence; no false GOAL on search list — [`recipes/meituan.md`](recipes/meituan.md) |
+| 8g | M3 Host slots (unit): load Meituan dual + DiDi airport SlotSpec; `next_slot` → `on_done` → hints replace | same API both apps; resume omits package (`tests/test_host_slots.py`, [`examples/slots/`](examples/slots/)) |
+| 8h | M5 KPIs (unit / CLI): history with guard_noop + double open_spec; `mau kpi` | `redo_same_act_class≥1`, `guard_noop≥1`; `cost_report.kpis` present (`tests/test_kpi.py`) |
 | 9 | After MCP `propose_action` / direct `tap` | journal has `propose_step` / `l0_step`; `totals.by_via` populated; `android_run` internal tap does **not** add `l0_step` |
 | 10 | Vision gating device checks | See [`eval-vision-gating.md`](eval-vision-gating.md) (U1/U2/T1/T2/C1) |
 | 11 | Optional U2 observe | `MAU_OBSERVE_BACKEND=u2` after `uv sync --extra u2`; `ready.observe_backend` / journal `observe_backend` — see [`eval-latency.md`](eval-latency.md) |

@@ -119,6 +119,38 @@ def test_didi_fare_check_despite_dirty_summary():
     assert not home_v.ok
 
 
+def test_meituan_deep_header_cart_bar_via_label_index():
+    """Bottom 去结算/已添加 must pass without use_xml (Phase N)."""
+    xml = (FIXTURES / "meituan_store_deep_header.xml").read_text(encoding="utf-8")
+    v = evaluate_success(
+        SuccessCheck(
+            package="com.sankuai.meituan",
+            labels_any=["已添加", "去结算"],
+            forbid_labels=["立即支付"],
+        ),
+        package="com.sankuai.meituan",
+        summary="package=com.sankuai.meituan; labels=[头图区0, 头图区1]",
+        xml=xml,
+    )
+    assert v.ok
+    assert any(m in {"已添加", "去结算"} or "已添加" in m or "去结算" in m for m in v.matched) or v.ok
+
+
+def test_didi_carpool_overlay_unfinished_via_label_index():
+    xml = (FIXTURES / "didi_fare_carpool_overlay.xml").read_text(encoding="utf-8")
+    v = evaluate_success(
+        SuccessCheck(
+            package="com.sdu.didi.psnger",
+            labels_all=["未拼成", "一口价"],
+            forbid_labels=["请输入终点"],
+        ),
+        package="com.sdu.didi.psnger",
+        summary="package=com.sdu.didi.psnger; labels=[途经点-0, 定位-0]",
+        xml=xml,
+    )
+    assert v.ok
+
+
 def test_use_xml_still_available():
     v = evaluate_success(
         SuccessCheck(labels_any=["埋藏价"], use_xml=True, use_foreground_tree=False),

@@ -1,0 +1,53 @@
+{
+  "id": "didi-airport-fare-slots",
+  "description": "Host SlotSpec for DiDi airport fare (production gates). Same next_slot/on_done API as Meituan dual — no App if-branches.",
+  "slots": [
+    {
+      "id": "A_open_didi",
+      "package": "com.sdu.didi.psnger",
+      "max_steps": 10,
+      "hints": ["关闭弹窗", "您想去哪里", "打车"],
+      "goal": "打开滴滴出行，若有广告/权限弹窗先关掉，进入可打车首页。不要叫车、不要支付。",
+      "done_when": {
+        "package": "com.sdu.didi.psnger",
+        "labels_any": ["您想去哪里", "上车点", "确认上车点"]
+      },
+      "affordances": ["tap_other", "navigate_back"]
+    },
+    {
+      "id": "B_set_dest_airport",
+      "depends_on": ["A_open_didi"],
+      "max_steps": 12,
+      "hints": ["您想去哪里", "输入目的地", "深圳机场", "机场"],
+      "goal": "把目的地设为「深圳机场」（选中具体机场/航站楼地点，不要停在空的「请输入终点」推荐列表）。进入带「选路线」或车型报价的页即可。不要点呼叫、不要支付。",
+      "done_when": {
+        "package": "com.sdu.didi.psnger",
+        "labels_any": ["选路线", "一口价", "未拼成", "特惠快车", "惊喜特价"],
+        "forbid_labels": ["请输入终点"],
+        "use_foreground_tree": true
+      },
+      "forbid_when_done": {
+        "banned_hint_labels": ["请输入终点"]
+      },
+      "affordances": ["type_query", "tap_other"]
+    },
+    {
+      "id": "C_read_carpool_and_special",
+      "depends_on": ["B_set_dest_airport"],
+      "max_steps": 12,
+      "hints": ["拼车", "特价"],
+      "goal": "停在报价/车型列表，确认同时能看到：拼车价（未拼成或拼成）以及不拼车的特价/特惠一口价（惊喜特价或特惠快车）。可点左侧「拼车」「特价」分类浏览，但不要点呼叫、确认叫车或支付。",
+      "done_when": {
+        "package": "com.sdu.didi.psnger",
+        "labels_all": ["未拼成", "一口价"],
+        "labels_any": ["特惠快车", "惊喜特价", "特价拼车", "极速拼车"],
+        "forbid_labels": ["请输入终点"],
+        "use_foreground_tree": true
+      },
+      "forbid_when_done": {
+        "banned_hint_labels": ["呼叫", "确认叫车", "请输入终点"]
+      },
+      "affordances": ["tap_other", "swipe_scroll", "wait"]
+    }
+  ]
+}

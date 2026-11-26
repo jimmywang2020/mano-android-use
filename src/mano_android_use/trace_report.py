@@ -417,6 +417,10 @@ def cost_report_from_doc(doc: dict[str, Any]) -> dict[str, Any]:
     )
     if vlm_skipped:
         narrative += f" VLM skipped on {vlm_skipped} step(s)."
+    guard_noop = sum(1 for row in steps if str(row.get("skip_reason") or "") == "guard_noop")
+    guard_deny = sum(1 for row in steps if str(row.get("skip_reason") or "") == "guard_deny")
+    if guard_noop or guard_deny:
+        narrative += f" Guard: noop×{guard_noop}, deny×{guard_deny}."
     if bypass_ms > 0:
         narrative += f" Includes bypass via propose/L0/tree/recover: {_fmt_ms(bypass_ms)}."
     by_backend = totals.get("by_observe_backend") if isinstance(totals.get("by_observe_backend"), dict) else {}
@@ -431,6 +435,12 @@ def cost_report_from_doc(doc: dict[str, Any]) -> dict[str, Any]:
             + (f" (backends {backend_bits})" if backend_bits else "")
             + "."
         )
+    from .kpi import kpis_from_spans, kpi_narrative
+
+    kpis = kpis_from_spans(steps)
+    kn = kpi_narrative(kpis)
+    if kn:
+        narrative += " " + kn
     return {
         "total_ms": total,
         "steps": n,
@@ -442,13 +452,29 @@ def cost_report_from_doc(doc: dict[str, Any]) -> dict[str, Any]:
         "by_via": by_via,
         "dominant_phase": dominant,
         "per_step": step_rows,
+        "kpis": kpis,
         "narrative": narrative,
     }
 
 
 def cost_report_from_history(history: list[dict[str, Any]] | None) -> dict[str, Any]:
+    from .kpi import kpis_from_history, kpis_from_spans, kpi_narrative, merge_kpi_views
+
     steps = spans_from_history(history)
-    return cost_report_from_doc({"steps": steps, "totals": aggregate_totals(steps)})
+    report = cost_report_from_doc({"steps": steps, "totals": aggregate_totals(steps)})
+    kpis = merge_kpi_views(kpis_from_history(history), kpis_from_spans(steps))
+    report["kpis"] = kpis
+    # Replace span-only KPI clause with merged narrative bits
+    base = str(report.get("narrative") or "")
+    # Drop trailing "KPIs: …" from span-only pass if present, then append merged.
+    if " KPIs: " in base:
+        base = base.split(" KPIs: ", 1)[0].rstrip()
+        if not base.endswith("."):
+            base += "."
+    kn = kpi_narrative(kpis)
+    if kn:
+        report["narrative"] = base + (" " if base else "") + kn
+    return report
 
 
 def plan_cost_report(stage_rows: list[dict[str, Any]]) -> dict[str, Any]:

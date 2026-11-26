@@ -35,6 +35,11 @@ API：`success_check.forbid_labels`（别名 `require_absent`）；MCP `success_
 `success_check` defaults to **foreground tree** (systemui filtered). Do **not** rely on
 raw `summary` alone under ColorOS U2 dumps.
 
+## Host SlotSpec（可选）
+
+与美团共用 `host_slots.next_slot` / `on_done`：
+[`../examples/slots/didi-airport-fare.slots.json`](../examples/slots/didi-airport-fare.slots.json)。
+
 ## Preferred plan（production）
 
 [`../examples/plans/didi-airport-carpool-vs-special.json`](../examples/plans/didi-airport-carpool-vs-special.json)

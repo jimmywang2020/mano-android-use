@@ -109,6 +109,13 @@ class _FakeSession:
 
     def tap(self, x, y, semantic_hint: str = "", via: str | None = None):
         self._taps.append({"x": x, "y": y, "via": via, "hint": semantic_hint})
+        # Opt-in: mutate summary so tree_shortcut post-verify (P3) sees a new sig.
+        if getattr(self, "_mutate_screen_on_tap", False):
+            if "; after_tap" not in self._summary:
+                self._summary = f"{self._summary}; after_tap"
+            if not self._package.endswith(".after"):
+                self._package = f"{self._package}.after"
+                self.last_package = self._package
         out = {"ok": True}
         if via:
             out["via"] = via
@@ -445,12 +452,16 @@ def test_tree_shortcut_skips_grounder(monkeypatch, tmp_path: Path):
         mode = capture_mode or (
             "tree" if detail == "tree" else ("shot" if detail == "screenshot" else "full")
         )
+        session._observe_calls.append(
+            {"detail": detail, "mode": mode, "bump_step": bump_step}
+        )
         if bump_step:
             session._step += 1
-        session._summary = summaries[min(session._step - 1, len(summaries) - 1)]
-        session._package = (
-            "com.android.settings" if session._step > 1 else "app.demo"
-        )
+            session._summary = summaries[min(session._step - 1, len(summaries) - 1)]
+            session._package = (
+                "com.android.settings" if session._step > 1 else "app.demo"
+            )
+        # bump_step=False: P3 post-tap verify — keep whatever tap mutated.
         shot = str(session._shot) if mode in {"full", "shot"} else ""
         return {
             "step": session._step,
@@ -467,7 +478,17 @@ def test_tree_shortcut_skips_grounder(monkeypatch, tmp_path: Path):
             },
         }
 
+    def _tap(x, y, semantic_hint: str = "", via: str | None = None):
+        session._taps.append({"x": x, "y": y, "via": via, "hint": semantic_hint})
+        session._summary = summaries[1]
+        session._package = "com.android.settings"
+        out = {"ok": True}
+        if via:
+            out["via"] = via
+        return out
+
     session.observe = _obs  # type: ignore[method-assign]
+    session.tap = _tap  # type: ignore[method-assign]
 
     res = android_run(
         session,
@@ -484,6 +505,47 @@ def test_tree_shortcut_skips_grounder(monkeypatch, tmp_path: Path):
         e.get("via") == "tree_shortcut" and e.get("vlm_skipped") for e in session._events
     )
     assert res.cost_report and "tree_shortcut" in (res.cost_report.get("by_via") or {})
+
+
+def test_tree_shortcut_no_screen_change_falls_through_to_vlm(monkeypatch, tmp_path: Path):
+    """Phase P3: shortcut tap that leaves the same screen sig → VLM same step."""
+    session = _FakeSession(run_dir=tmp_path)
+    # Default FakeSession.tap does not mutate screen → post-verify miss.
+    session._find_hits = [
+        {"text": "设置", "center": [120, 340], "clickable": True},
+    ]
+    proposes = {"n": 0}
+
+    class _G:
+        model = "fake"
+
+        def propose(self, image, instruction):
+            from mano_android_use.grounder import GrounderResult
+
+            proposes["n"] += 1
+            return GrounderResult(
+                True,
+                "fake",
+                {"action": "terminate", "status": "success"},
+                "{}",
+            )
+
+    monkeypatch.setattr("mano_android_use.run_loop.Grounder", lambda model=None: _G())
+    res = android_run(
+        session,
+        '打开「设置」',
+        max_steps=4,
+        tree_hints=["设置"],
+        stuck_same_summary=0,
+    )
+    assert res.status == TERMINAL_OK
+    assert session._taps  # white tap happened
+    assert proposes["n"] >= 1  # VLM same step (or next) after miss
+    assert any(e.get("event") == "tree_shortcut_miss" for e in session._events)
+    # First history step should carry miss flag when shortcut attempted
+    miss_steps = [h for h in res.history if h.get("tree_shortcut_miss")]
+    assert miss_steps
+    assert miss_steps[0].get("tree_shortcut_miss_reason") == "no_screen_change"
 
 
 def test_tree_shortcut_multi_hit_falls_through_to_vlm(monkeypatch):
@@ -621,8 +683,8 @@ def test_tree_shortcut_still_uses_full_observe(monkeypatch, tmp_path: Path):
         session._observe_calls.append({"detail": detail, "mode": mode, "bump_step": bump_step})
         if bump_step:
             session._step += 1
-        session._summary = summaries[min(session._step - 1, len(summaries) - 1)]
-        session._package = "com.android.settings" if session._step > 1 else "app.demo"
+            session._summary = summaries[min(session._step - 1, len(summaries) - 1)]
+            session._package = "com.android.settings" if session._step > 1 else "app.demo"
         shot = str(session._shot) if mode in {"full", "shot"} else ""
         return {
             "step": session._step,
@@ -639,7 +701,17 @@ def test_tree_shortcut_still_uses_full_observe(monkeypatch, tmp_path: Path):
             },
         }
 
+    def _tap(x, y, semantic_hint: str = "", via: str | None = None):
+        session._taps.append({"x": x, "y": y, "via": via, "hint": semantic_hint})
+        session._summary = summaries[1]
+        session._package = "com.android.settings"
+        out = {"ok": True}
+        if via:
+            out["via"] = via
+        return out
+
     session.observe = _obs  # type: ignore[method-assign]
+    session.tap = _tap  # type: ignore[method-assign]
     res = android_run(
         session,
         '打开「设置」',
@@ -650,9 +722,12 @@ def test_tree_shortcut_still_uses_full_observe(monkeypatch, tmp_path: Path):
     assert res.status == TERMINAL_OK
     assert session._observe_calls[0]["mode"] == "full"
     assert session._taps and session._taps[0]["via"] == "tree_shortcut"
-    # Second step is VLM terminate — still one full per step, no upgrade re-observe.
-    assert all(c["mode"] == "full" for c in session._observe_calls)
-    assert all(c.get("bump_step") for c in session._observe_calls)
+    # Logical steps use full capture; P3 may add one bump_step=False tree post-verify.
+    fulls = [c for c in session._observe_calls if c["mode"] == "full" and c.get("bump_step")]
+    assert len(fulls) >= 2
+    assert any(
+        c["mode"] == "tree" and not c.get("bump_step") for c in session._observe_calls
+    )
 
 
 def test_type_grace_skips_unchanged_back(monkeypatch, tmp_path: Path):

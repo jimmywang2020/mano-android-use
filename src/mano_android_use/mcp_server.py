@@ -238,6 +238,68 @@ def journal_tail(n: int = 20) -> str:
 
 
 @mcp.tool()
+def slot_peek(slots_path: str, progress_json: str = "") -> str:
+    """Phase P4/O3: next SlotSpec + android_run args + suggested find needles.
+
+    Read-only (no device). After STUCK/TIME_BUDGET: find(suggested_find) →
+    replace tree_hints if page wrong → short android_run from args.mcp_arguments
+    (omit package when warm). Example slots_path:
+    docs/examples/slots/meituan-dual-drink.slots.json
+    """
+    from .host_slots import load_slot_graph, slot_peek as _peek
+
+    path = (slots_path or "").strip()
+    if not path:
+        return _dumps({"ok": False, "code": "MISSING_SLOTS_PATH"})
+    prog: dict = {}
+    raw = (progress_json or "").strip()
+    if raw:
+        try:
+            loaded = json.loads(raw)
+            if isinstance(loaded, dict):
+                prog = loaded
+        except json.JSONDecodeError as exc:
+            return _dumps({"ok": False, "code": "BAD_PROGRESS_JSON", "reason": str(exc)})
+    try:
+        graph = load_slot_graph(path)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        return _dumps({"ok": False, "code": "SLOT_LOAD_ERROR", "reason": str(exc)})
+    out = _peek(graph, prog)
+    out["ok"] = True
+    out["graph_id"] = graph.id
+    return _dumps(out)
+
+
+@mcp.tool()
+def resume_from_run(
+    run_id: str = "",
+    slots_path: str = "",
+    goal: str = "",
+) -> str:
+    """Phase O-B: after Cursor -32001 / empty timeout, draft TaskState from journal.
+
+    Does not touch the device. Prefer this before guessing goals. cart_count comes
+    only from「已添加N件」a11y text — never from GOAL_REACHED event counts.
+    Confirm needs_confirm fields, then short android_run with mcp_hint
+    (omit package, cold_start=false, progress_json). Optional slots_path
+    (e.g. docs/examples/slots/meituan-dual-drink.slots.json) suggests
+    completed_slots heuristically. Empty run_id → newest under session runs root.
+    """
+    from .resume_from_run import resume_from_run as _resume
+
+    session = _session()
+    runs_root = str(Path(session.run_dir).parent)
+    target = run_id.strip() or None
+    out = _resume(
+        target,
+        runs_root=runs_root,
+        slots_path=slots_path.strip() or None,
+        goal=goal or "",
+    )
+    return _dumps(out)
+
+
+@mcp.tool()
 def android_run(
     goal: str,
     max_steps: int = _MCP_DEFAULT_MAX_STEPS,
@@ -273,7 +335,7 @@ def android_run(
     - Optional success_check: success_package + success_labels_any/all +
       success_forbid_labels (comma-separated; e.g. 请输入终点). Prefer labels_all
       for terminal stages. Early-stops when the screen matches; vetoes false terminate:success.
-    - Long / multi-stage goals → prefer android_run_plan with short max_steps per stage.
+    - Long / multi-stage in Cursor → N× short android_run (slots); android_run_plan mainly CLI.
     - Tries KEYCODE_WAKEUP once if asleep; still off → NEED_HUMAN (unlock manually).
     - Chinese typing needs AdbKeyboard (see ready.tips); install dialogs are not this tool.
     - Stops on payment/submit (NEED_HUMAN / BLOCKED_BY_POLICY), stuck, budget, TIME_BUDGET, errors.
@@ -315,16 +377,16 @@ def android_run(
 
 @mcp.tool()
 def android_run_plan(plan_path: str = "", plan_json: str = "", model: str = "") -> str:
-    """PRIMARY for long tasks: staged plan = sequential android_run + per-stage success_check.
+    """Staged plan = sequential android_run + per-stage success_check.
 
-    App-agnostic — Ctrip/Meituan differ only by plan data. Prefer short stages over one
-    huge android_run goal. Provide plan_path (repo-relative or absolute) or plan_json.
+    Cursor multi-stage (Meituan dual-drink, DiDi fare, …): prefer N× short android_run
+    via SlotSpec (docs/examples/slots/) so each call stays under Host timeout — one fat
+    MCP plan often hits -32001. Prefer this tool for CLI `mau run-plan` or already-short
+    plans. App-agnostic — apps differ only by plan data. Provide plan_path or plan_json.
     Each stage uses ~90s MCP wall soft-budget; TIME_BUDGET stops later stages and returns
-    partial cost_report + continue_hint (resume stage / CLI mau run-plan for long jobs).
-    Response includes cost_report with plan totals + per-stage narratives; always tell the
-    user cost_report.narrative and each stage's time/tokens/dominant_phase.
-    Examples: docs/examples/plans/ctrip-beijing-homestay.json,
-    docs/examples/plans/meituan-guotiao-takeout.json.
+    partial cost_report + continue_hint. Always relay cost_report.narrative + per-stage
+    dominant_phase. Examples: docs/examples/plans/ctrip-beijing-homestay.json,
+    docs/examples/plans/meituan-dual-drink-cart.json (still better as short runs in Cursor).
     """
     import json
     from pathlib import Path

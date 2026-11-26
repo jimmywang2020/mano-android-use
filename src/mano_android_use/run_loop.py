@@ -15,9 +15,17 @@ from typing import Any
 
 from .apply_action import VIA_ANDROID_RUN, VIA_TREE_SHORTCUT, apply_action
 from .grounder import Grounder, GrounderResult, pixel_from_normalized
+from .guard import filter_tree_candidates, guard_proposed_act
+from .progress import (
+    cart_or_fare_hold,
+    normalize_progress,
+    or_merge_progress,
+    progress_prompt_lines,
+)
 from .session import DeviceSession
 from .success_check import SuccessCheck, evaluate_success, progress_from_verdict
 from .tips import build_tips
+from .world_evidence import suggest_world_progress
 from .trace_report import (
     build_step_span,
     cost_report_from_history,
@@ -131,14 +139,7 @@ def build_task_patch(
     ``screen_digest`` / ``status``, and on the next short ``android_run`` passes
     progress back via ``progress_json`` / ``initial_progress``.
     """
-    prog = dict(progress or {})
-    if plan_progress:
-        # Prefer explicit plan_progress as the accumulated source of truth.
-        merged = dict(prog)
-        for k, v in plan_progress.items():
-            if v:
-                merged[k] = v
-        prog = merged
+    prog = or_merge_progress(progress, plan_progress)
     digest = screen_digest if isinstance(screen_digest, dict) else None
     if digest is None and isinstance(resume, dict):
         maybe = resume.get("screen_digest")
@@ -173,16 +174,14 @@ def merge_task_state(
     out: dict[str, Any] = dict(state or {})
     if not patch:
         return out
-    prog = dict(out.get("progress") or {})
+    prog = normalize_progress(out.get("progress") if isinstance(out.get("progress"), dict) else {})
     for src_key in ("progress", "plan_progress"):
         src = patch.get(src_key)
         if isinstance(src, dict):
-            for k, v in src.items():
-                if v:
-                    prog[k] = v
+            prog = or_merge_progress(prog, src)
     out["progress"] = prog
     if "plan_progress" in patch and isinstance(patch.get("plan_progress"), dict):
-        out["plan_progress"] = dict(patch["plan_progress"])
+        out["plan_progress"] = normalize_progress(patch["plan_progress"])
     for key in ("status", "goal", "run_id", "run_dir", "plan_id", "resume", "screen_digest", "evidence_refs"):
         if key in patch and patch[key] is not None:
             out[key] = patch[key]
@@ -191,11 +190,14 @@ def merge_task_state(
 
 
 def parse_progress_json(raw: str | dict[str, Any] | None) -> dict[str, Any]:
-    """Parse Host-supplied progress JSON (MCP string or dict). Empty → {}."""
+    """Parse Host-supplied progress JSON (MCP string or dict). Empty → {}.
+
+    Normalizes M1 contract fields (``completed_slots`` / ``world`` / ``policy``).
+    """
     if raw is None:
         return {}
     if isinstance(raw, dict):
-        return {str(k): v for k, v in raw.items()}
+        return normalize_progress({str(k): v for k, v in raw.items()})
     text = str(raw).strip()
     if not text:
         return {}
@@ -204,7 +206,7 @@ def parse_progress_json(raw: str | dict[str, Any] | None) -> dict[str, Any]:
     data = json.loads(text)
     if not isinstance(data, dict):
         raise ValueError("progress_json must be a JSON object")
-    return {str(k): v for k, v in data.items()}
+    return normalize_progress({str(k): v for k, v in data.items()})
 
 
 def continue_hint_for_run(
@@ -384,11 +386,19 @@ def _record_step_timing(
         skip_reason=skip_reason,
         observe_breakdown=bd if isinstance(bd, dict) else None,
     )
+    guard = entry.get("guard") if isinstance(entry.get("guard"), dict) else None
+    if guard:
+        if guard.get("act_class"):
+            span["act_class"] = str(guard.get("act_class") or "")
+        if guard.get("target_key"):
+            span["target_key"] = str(guard.get("target_key") or "")
+        if guard.get("code"):
+            span["guard_code"] = str(guard.get("code") or "")
     entry["timing"] = span
     if vlm_skipped:
         entry["vlm_skipped"] = True
-        if skip_reason:
-            entry["skip_reason"] = skip_reason
+    if skip_reason:
+        entry["skip_reason"] = skip_reason
     session.log_event(dict(span))
     return span
 
@@ -505,13 +515,31 @@ def try_tree_shortcut(
     session: DeviceSession,
     candidates: list[str],
 ) -> dict[str, Any] | None:
-    """If exactly one find hit with a center, return tap target; else None."""
+    """Resolve a safe tap for the first usable tree hint.
+
+    Uses :func:`mano_android_use.tree.resolve_tap_target` (clickable / ancestor,
+    reject bottom overlays that do not own the hint) on the last XML dump.
+    Falls back to legacy "exactly one find center" only when XML is empty.
+    """
     if not candidates:
         return None
+    from .tree import resolve_tap_target
+
+    xml = getattr(session, "last_xml", "") or ""
+    pkg = getattr(session, "last_package", None) or None
+    if xml.strip():
+        for query in candidates:
+            hit = resolve_tap_target(xml, query, package=pkg, limit=8)
+            if hit:
+                return hit
+        # Fall through: unit fakes / sparse dumps may only populate session.find.
+
     for query in candidates:
         found = session.find(query, limit=5)
         hits = list(found.get("hits") or [])
-        with_center = [h for h in hits if isinstance(h.get("center"), list) and len(h["center"]) >= 2]
+        with_center = [
+            h for h in hits if isinstance(h.get("center"), list) and len(h["center"]) >= 2
+        ]
         if len(with_center) == 1:
             c = with_center[0]["center"]
             return {
@@ -549,18 +577,10 @@ def _instruction(
         ]
     )
     # Short RunMemory view for Grounder (format on demand; keep token-light).
-    prog = {k: v for k, v in (progress or {}).items() if v}
-    if prog:
-        bits = [f"{k}" for k in list(prog.keys())[:12]]
-        parts.append("Known progress bits (do not undo): " + ", ".join(bits) + ".")
+    parts.extend(progress_prompt_lines(progress))
     labels = [str(x).strip() for x in (digest_labels or []) if str(x).strip()]
     if labels:
         parts.append("Screen digest labels: " + ", ".join(labels[:16]) + ".")
-    if prog.get("fare_seen") or prog.get("cart_seen"):
-        parts.append(
-            "Progress hold: fare/cart already seen — do not press BACK/HOME; "
-            "prefer terminate:success if the quote/cart UI is visible."
-        )
     if success_check and not success_check.is_empty():
         parts.append(
             "External success_check (must hold before success is accepted): "
@@ -687,11 +707,12 @@ def android_run(
     wall_budget_ms = max(0, int(wall_budget_ms or 0))
 
     def _merge_progress(extra: dict[str, Any] | None) -> None:
-        for k, v in (extra or {}).items():
-            if v:
-                progress[k] = v
+        nonlocal progress
+        progress = or_merge_progress(progress, extra)
 
     _merge_progress(initial_progress)
+    # Host policy.banned_hint_labels drops success/payment CTAs from tree-first taps.
+    tree_candidates = filter_tree_candidates(tree_candidates, progress)
 
     def _result(
         status: str,
@@ -800,6 +821,14 @@ def android_run(
             screenshot_path=str(obs.get("screenshot_path") or ""),
             xml_path=str(obs.get("xml_path") or ""),
         )
+        # M4: suggest world.cart_count from a11y (Host OR-merges via task_patch).
+        world_prog = suggest_world_progress(
+            summary=last_summary,
+            xml=session.last_xml or "",
+            labels=list(last_digest.get("labels") or []),
+        )
+        if world_prog:
+            _merge_progress(world_prog)
         sig = str(last_digest.get("signature") or "")
         entry: dict[str, Any] = {
             "step": step,
@@ -811,6 +840,8 @@ def android_run(
             "observe_breakdown": observe_bd,
             "capture_mode": obs.get("capture_mode") or "full",
         }
+        if world_prog:
+            entry["world_evidence"] = world_prog
 
         if safety.get("code") == "NEED_HUMAN" or safety.get("allow") is False:
             _record_step_timing(
@@ -881,7 +912,7 @@ def android_run(
                         "act_grace_remaining": act_grace_remaining,
                     }
                 )
-            elif progress.get("fare_seen") or progress.get("cart_seen"):
+            elif cart_or_fare_hold(progress):
                 # Saw fare/cart labels but full success_check not yet ok — hold
                 # the screen (no BACK) and hand Host a ResumeSpec with progress.
                 _record_step_timing(
@@ -985,62 +1016,144 @@ def android_run(
             unchanged_streak = 0
             prev_screen_sig = sig
 
-        # Tree-first: unique find hit → tap without VLM.
+        # Tree-first: unique find hit → Guard → tap without VLM.
+        # Phase P3: Guard NO_OP / tap with no screen change → fall through to VLM
+        # same step (do not count as progress / white-tap loop).
         tree_hit = try_tree_shortcut(session, tree_candidates)
         if tree_hit:
-            t_act0 = time.perf_counter()
-            exec_result = session.tap(
-                int(tree_hit["x"]),
-                int(tree_hit["y"]),
-                semantic_hint=str(tree_hit.get("query") or goal),
-                via=VIA_TREE_SHORTCUT,
-            )
-            act_ms = max(0, int((time.perf_counter() - t_act0) * 1000))
+            used = str(tree_hit.get("query") or "")
             entry["tree_shortcut"] = {
                 "query": tree_hit.get("query"),
                 "xy": [tree_hit["x"], tree_hit["y"]],
             }
-            entry["execution"] = exec_result
-            if exec_result.get("ok") and act_grace_sig != sig:
-                act_grace_remaining = _ACT_GRACE_STEPS
-                act_grace_sig = sig
-                entry["act_grace_armed"] = act_grace_remaining
-            _record_step_timing(
-                session,
-                entry,
-                step=step,
-                model=grounder.model,
-                observe_ms=observe_ms,
-                act_ms=act_ms,
-                action={"action": "click"},
-                via=VIA_TREE_SHORTCUT,
-                vlm_skipped=True,
-                skip_reason="tree_shortcut",
+            guard_d = guard_proposed_act(
+                progress=progress,
+                kind="click",
+                hint=used,
+                goal=goal,
+                action={"action": "click", "text": used},
             )
-            history.append(entry)
-            if not exec_result.get("ok"):
-                code = str(exec_result.get("code") or "")
-                if code == "BLOCKED_BY_POLICY":
-                    return _result(
-                        TERMINAL_BLOCKED,
-                        steps=step,
-                        reason=str(exec_result.get("reason") or code),
-                    )
-                if code == "NEED_HUMAN":
-                    return _result(
-                        TERMINAL_HUMAN,
-                        steps=step,
-                        reason=str(exec_result.get("reason") or code),
-                    )
-                return _result(
-                    TERMINAL_ERROR,
-                    steps=step,
-                    reason=str(exec_result.get("reason") or exec_result),
+            entry["guard"] = guard_d.to_dict()
+            if not guard_d.allow:
+                entry["execution"] = {
+                    "ok": guard_d.code == "GUARD_NOOP",
+                    "code": guard_d.code,
+                    "reason": guard_d.reason,
+                    "via": VIA_TREE_SHORTCUT,
+                    "guard": True,
+                }
+                entry["tree_shortcut_miss"] = True
+                entry["tree_shortcut_miss_reason"] = guard_d.skip_reason or "guard_deny"
+                tree_candidates = [c for c in tree_candidates if c != used]
+                session.log_event(
+                    {
+                        "event": "tree_shortcut_miss",
+                        "step": step,
+                        "query": used,
+                        "reason": entry["tree_shortcut_miss_reason"],
+                    }
                 )
-            # Drop the used hint so we do not re-tap the same label forever.
-            used = str(tree_hit.get("query") or "")
-            tree_candidates = [c for c in tree_candidates if c != used]
-            continue
+                # Fall through to VLM below (same observe / PNG).
+            else:
+                t_act0 = time.perf_counter()
+                exec_result = session.tap(
+                    int(tree_hit["x"]),
+                    int(tree_hit["y"]),
+                    semantic_hint=used or goal,
+                    via=VIA_TREE_SHORTCUT,
+                )
+                act_ms = max(0, int((time.perf_counter() - t_act0) * 1000))
+                entry["execution"] = exec_result
+                if not exec_result.get("ok"):
+                    _record_step_timing(
+                        session,
+                        entry,
+                        step=step,
+                        model=grounder.model,
+                        observe_ms=observe_ms,
+                        act_ms=act_ms,
+                        action={"action": "click", "text": used},
+                        via=VIA_TREE_SHORTCUT,
+                        vlm_skipped=True,
+                        skip_reason="tree_shortcut",
+                    )
+                    history.append(entry)
+                    code = str(exec_result.get("code") or "")
+                    if code == "BLOCKED_BY_POLICY":
+                        return _result(
+                            TERMINAL_BLOCKED,
+                            steps=step,
+                            reason=str(exec_result.get("reason") or code),
+                        )
+                    if code == "NEED_HUMAN":
+                        return _result(
+                            TERMINAL_HUMAN,
+                            steps=step,
+                            reason=str(exec_result.get("reason") or code),
+                        )
+                    return _result(
+                        TERMINAL_ERROR,
+                        steps=step,
+                        reason=str(exec_result.get("reason") or exec_result),
+                    )
+
+                # Post-tap screen check (cheap tree observe, same logical step).
+                post_sig = ""
+                try:
+                    time.sleep(0.2)
+                    post_obs = session.observe(
+                        detail="tree",
+                        max_nodes=80,
+                        bump_step=False,
+                        capture_mode="tree",
+                    )
+                    post_pkg = str(post_obs.get("package") or last_package)
+                    post_sum = str(post_obs.get("summary") or last_summary)
+                    post_sig = screen_signature(
+                        package=post_pkg,
+                        summary=post_sum,
+                        xml=getattr(session, "last_xml", "") or "",
+                    )
+                    entry["tree_shortcut_post_sig"] = post_sig
+                except Exception as exc:  # noqa: BLE001 — miss-open; prefer VLM
+                    entry["tree_shortcut_post_error"] = str(exc)[:160]
+                    post_sig = ""
+
+                if post_sig and post_sig == sig:
+                    # White / no-op tap: drop hint, fall through to VLM same step.
+                    entry["tree_shortcut_miss"] = True
+                    entry["tree_shortcut_miss_reason"] = "no_screen_change"
+                    tree_candidates = [c for c in tree_candidates if c != used]
+                    session.log_event(
+                        {
+                            "event": "tree_shortcut_miss",
+                            "step": step,
+                            "query": used,
+                            "reason": "no_screen_change",
+                            "act_ms": act_ms,
+                        }
+                    )
+                else:
+                    if act_grace_sig != sig:
+                        act_grace_remaining = _ACT_GRACE_STEPS
+                        act_grace_sig = sig
+                        entry["act_grace_armed"] = act_grace_remaining
+                    _record_step_timing(
+                        session,
+                        entry,
+                        step=step,
+                        model=grounder.model,
+                        observe_ms=observe_ms,
+                        act_ms=act_ms,
+                        action={"action": "click", "text": used},
+                        via=VIA_TREE_SHORTCUT,
+                        vlm_skipped=True,
+                        skip_reason="tree_shortcut",
+                    )
+                    history.append(entry)
+                    # Drop the used hint so we do not re-tap the same label forever.
+                    tree_candidates = [c for c in tree_candidates if c != used]
+                    continue
 
         # Fallback if full observe somehow lacked a PNG (should be no-op normally).
         obs, upgrade_ms, upgrade_reason = ensure_observation_for_grounder(session, obs)
@@ -1207,6 +1320,40 @@ def android_run(
                 reason=f"repeated action {fp}",
             )
 
+        kind = str(action.get("action") or "")
+        guard_d = guard_proposed_act(
+            progress=progress,
+            kind=kind,
+            hint=str(action.get("text") or goal),
+            goal=goal,
+            action=action,
+        )
+        entry["guard"] = guard_d.to_dict()
+        if not guard_d.allow:
+            entry["execution"] = {
+                "ok": guard_d.code == "GUARD_NOOP",
+                "code": guard_d.code,
+                "reason": guard_d.reason,
+                "via": VIA_ANDROID_RUN,
+                "guard": True,
+            }
+            _record_step_timing(
+                session,
+                entry,
+                step=step,
+                model=grounder.model,
+                observe_ms=observe_ms,
+                grounder_ms=grounder_ms,
+                act_ms=0,
+                proposed=proposed,
+                action=action,
+                via=VIA_ANDROID_RUN,
+                vlm_skipped=False,
+                skip_reason=guard_d.skip_reason or "guard_deny",
+            )
+            history.append(entry)
+            continue
+
         t_act0 = time.perf_counter()
         exec_result = apply_action(
             session,
@@ -1218,7 +1365,6 @@ def android_run(
         act_ms = max(0, int((time.perf_counter() - t_act0) * 1000))
 
         entry["execution"] = exec_result
-        kind = str(action.get("action") or "")
         if exec_result.get("ok") and kind in _ACT_GRACE_KINDS and act_grace_sig != sig:
             act_grace_remaining = _ACT_GRACE_STEPS
             act_grace_sig = sig
