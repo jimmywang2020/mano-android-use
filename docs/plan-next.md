@@ -22,7 +22,8 @@
 | **N Label index + safe tree_shortcut** | **Done** — N0–N5 (DiDi live GOAL 2026-11-24; Meituan via fixture+live XML) |
 | **O Host Continuity (A short runs + B lost-MCP)** | **Done*** — O0–O2+O4–O6 Meituan live PASS 2026-11-26; O3 optional leftover |
 | **P Cut spin (wrong-page / soft-gate / dull hints)** | **Done*** — P0–P5; live PASS* 2026-11-26 (~3.7min mau vs O6 5.5) |
-| **Q Wall-clock hygiene (no STUCK→L0; dump137; dynamic C hints)** | **Active** — Q0–Q3 landed 2026-11-26; **Q4 live** pending |
+| **Q Wall-clock hygiene (no STUCK→L0; dump137; dynamic C hints)** | **Done*** — Q0–Q3 + Q4/Q4r2 live 2026-11-26（completion OK；墙钟≲3min 未达，见 acceptance） |
+| **R Orchestration hard gate + wall leftovers** | **Done*** — R0–R5 + R4 smoke + Q4r3 live 2026-11-27（完成 OK；墙钟~6.7min 未达 ≲3min，见 acceptance） |
 
 ## Phase M — Anti-redo (closed)
 
@@ -117,7 +118,7 @@
 | **Q1 Host：禁 STUCK→L0** | rule / tips / playbook / recipe 硬纪律 | **Done** | 完成↑/持平；墙钟 −~70s（按上次账）；泛化强 |
 | **Q2 mau：ui_dump 137** | Act 前若 observe XML 仍新鲜则 **跳过** 二次 `ui_dump`（`MAU_UI_REFRESH_MAX_AGE_MS`，默认 8s）；journal `ui_refresh_skipped` / `ui_refresh_error.code`；失败保留旧 XML（不吞成成功） | **Done**（unit）；live 减 137 见 Q4 | 完成↑；墙钟预期大降；泛化强 |
 | **Q3 Host：进 C 动态 hint** | recipe/playbook：B 后 `find` → 填 C hints；禁死 SKU | **Done**（docs） | 完成持平/升；少 C1；泛化靠流程 |
-| **Q4 Live re-measure** | 同机 dual-drink：禁 L0、新 dump、进 C 前 find；记录墙钟 / dump137 / C 轮数 | **Pending** | 三目标验收 |
+| **Q4 Live re-measure** | 同机 dual-drink：禁 L0、新 dump、进 C 前 find；记录墙钟 / dump137 / C 轮数 | **Done***（Q4 + Q4r2；completion+禁 L0 主环 OK；墙钟≲3min 未达） | 完成↑；墙钟↓未达目标；泛化靠流程 |
 
 **Order:** Q0 → Q1 ∥ Q2 → Q3 → Q4（Q1/Q2 可并行；Q3 不依赖 Q2 代码，但 live 建议三项齐）。
 
@@ -133,6 +134,44 @@
 **Non-goals:** 优化 token；加长单次 `android_run`；Session TaskStore；支付自动化；把第二杯 SKU 写进 slots 死数据；关闭 tree-first / unchanged skip。
 
 **Risks:** Q2 若「跳过失败 dump」→ shortcut 误判成功（伤目标1）— 必须修成功率而非吞错。Q3 若 Host 偷懒写死 SKU → 伤目标3 并间接伤目标1。
+
+## Phase R — Orchestration hard gate + wall leftovers (active)
+
+**Why (Q4r2):** Q1 只在 tip；意图分流曾有 STUCK→L0 链 ~86s；Q4r2 完成 OK、墙钟 ~297s 未达 ≲3min。硬闸是**护栏/防回退**，不是墙钟主杠杆。
+
+### Success metrics（同 Phase Q）
+
+| # | 目标 | 衡量 | 本 Phase 预期 |
+|---|------|------|----------------|
+| 1 | 完成任务 | dual-drink：`已添加2件`+`去结算`，停支付前 | **持平**（保留 1 次 L0 / `force_l0`） |
+| 2 | 减少任务时长 | **墙钟**（不计 token）；对标 Q4r2 ~297s → 仍瞄 ≲180s | 闸本身对 Q4r2 **≈0～−30s**；防回退到 +60～90s L0 洞；≲3min 靠 R5/R6 |
+| 3 | 泛化 | 闸不绑美团文案；与 Safety/Guard 正交 | **强**（代码闸 > tip） |
+
+### Locked design
+
+- Arm **only on `STUCK`**；**`TIME_BUDGET` does not arm**
+- Quota **= 1**；用尽后需 `force_l0=true`
+- Gate **Host L0 only** (`VIA_L0_DIRECT`)；never `android_run` internal acts
+- Disarm on new `android_run` begin or non-STUCK terminal
+- Deny: `ok:false`, `code:L0_BLOCKED_AFTER_STUCK`, `next` → find → short `android_run`
+
+### Sub-phases
+
+| ID | Scope | Exit | 对三目标 |
+|----|--------|------|----------|
+| **R0 Contract** | 本节 + acceptance Phase R + playbook 硬闸一句 | **Done** | — |
+| **R1 Session 状态** | `DeviceSession` arm/quota/disarm；`android_run` begin disarm；`android_run_stop` STUCK→arm | **Done** | 3↑ |
+| **R2 L0 入口** | tap/swipe/type/press + MCP `force_l0`；`L0_BLOCKED_AFTER_STUCK` | **Done** | 1 持平；2 防回退；3↑ |
+| **R3 Host 面** | tips / rule / playbook 教读 code+next | **Done** | 1↑ |
+| **R4 Live smoke** | 故意 STUCK 后闸行为；`force_l0`；`via=android_run` 不拦 | **Done**（`134855-1abe61`） | 1/2/3 |
+| **R5 进店一次到位** | 软门/残车假 GOAL：A 须「选规格/请输入商品名」；残车不作进店证明 | **Done**（docs） | **2 主杠杆** |
+| **R6 压缩编排 gap** | Host 模板化 `continue_hint`；find 仅换页/换杯；Q4r3 墙钟复测 | **Done***（Q4r3 完成、墙钟未达） | **2 主杠杆** |
+
+**Order:** R0 → R1 → R2 → R3 → R4；然后 R5 ∥ R6。禁止加长单次 `android_run`。
+
+**Non-goals:** 优化 token；永远禁止 L0；靠硬闸单独打到 ≲3min；Session TaskStore；支付自动化。
+
+**Risks:** Agent 忽略拒绝码 → 必须带 `next`；MCP reload 清空闸（可接受）；新 `force_l0` schema 须重连 MCP。
 
 ## Env flags
 

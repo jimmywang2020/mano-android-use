@@ -148,12 +148,31 @@ See [`docs/plan-next.md`](plan-next.md) Phase Q. Metrics: **wall clock** (not to
 - [x] **Q1** Host: ban STUCK→L0 chains (rule / tips / playbook / recipe)
 - [x] **Q2** mau: skip redundant `ui_dump` when observe XML is fresh (`MAU_UI_REFRESH_MAX_AGE_MS`); log `ui_refresh_skipped` / richer `ui_refresh_error`
 - [x] **Q3** Dual-drink: before C, `find` visible second drink (docs/recipe); no hardcoded store SKU
-- [x] **Q4 Live:** A→D `已添加2件`+stop-before-pay; no STUCK→L0 main loop; ≤1 failed C; **avoid 特价/拼好饭**; wall ~5min (mau Σ≈2min) vs prior ~5.6min — ≲3min wall not yet hit
+- [x] **Q4 Live:** A→D `已添加2件`+stop-before-pay; no STUCK→L0 main loop; ≤1 failed C; **avoid 特价/拼好饭**; wall ~5min (mau Σ≈2min) vs prior ~5.6min — ≲3min wall not yet hit. **Q4r2** same gate; mau Σ≈1.7min / wall≈4min（含店头 TIME_BUDGET+A2b STUCK+一次 L0「外送」纠偏）
 
 | Check | Date | Result | Notes |
 |-------|------|--------|-------|
 | Q0–Q3 docs + unit | 2026-11-26 | PASS | playbook/rule/tips/recipe; `tests/test_session_ui_refresh.py` (fresh skip / stale dump / force / max-age 0) |
 | Q4 Meituan dual wall re-measure | 2026-11-26 | PASS* | 普通外卖进 LINLEE；B 单丛鸭屎香 + C 林里招牌 → `已添加2件`+`去结算`（未点支付）。勿进特价/拼好饭。l0_share=0 on runs；墙钟~5min / mau Σ~2min（目标≲3min 未达） |
+| Q4r2 Meituan dual retest | 2026-11-26 | PASS* | LINLEE 普通外卖：A `172806` BUDGET 店头 → A2 `172917` 残车 false-ish → A2b `172946` STUCK → L0 点「外送」→ `173042` 露「选规格」→ 残车=`已添加1件` 作 B → find 后 C `173120` 五窨茉莉 →`已添加2件`（14.7s）→ D `173156` `已添加2件`+`去结算` 停支付前。C 轮数=1；无 STUCK→L0 主环。mau Σ≈102s（~1.7min）；墙钟~4min（≲3min 未达） |
+
+## Phase R — Orchestration hard gate + wall leftovers
+
+See [`docs/plan-next.md`](plan-next.md) Phase R. Hard gate = anti-regression；墙钟 ≲3min 靠 R5/R6。
+
+- [x] **R0** Contract: plan-next Phase R + this table + playbook one-liner
+- [x] **R1–R2** mau: STUCK→arm（quota=1）；L0 `force_l0`；`L0_BLOCKED_AFTER_STUCK`
+- [x] **R3** tips/rule/playbook teach code+next
+- [x] **R4** Live/unit smoke: 2nd L0 after STUCK denied；≤1 correction
+- [x] **R5** Enter-store once (soft gate / residual cart ≠ enter proof) — docs/recipe/rule
+- [x] **R6** Compress Host gaps — docs/playbook/tips；**Q4r3 wall** 待解锁真机复测
+
+| Check | Date | Result | Notes |
+|-------|------|--------|-------|
+| R0–R3 docs + R1–R2 unit | 2026-11-27 | PASS | `tests/test_orchestration_gate.py` (7); playbook/rule/tips/recipe |
+| R4 L0 gate smoke | 2026-11-27 | PASS | DeviceSession `20261127-134855-1abe61`：STUCK→tap OK→第 2 次 `L0_BLOCKED_AFTER_STUCK`→`force_l0` OK；`via=android_run` 不拦 |
+| R5 enter-store docs | 2026-11-27 | PASS | recipe/playbook/rule：选规格门闩；残车≠进店 |
+| R6 gap docs + Q4r3 | 2026-11-27 | PASS* | gap 模板已写；**Q4r3** 完成：`已添加2件`+`去结算`（青苹果冰柠茶+单丛鸭屎香）；A 一次到位见选规格；C1/C2 BUDGET（详情页/acquire_after_cart）→ 一次 L0「返回」→ C3 GOAL；l0_share=0。mau Σ≈223s；墙钟 A→D ≈**6.7min**（未达 ≲3min；C 空转+店头回退为主因） |
 
 ## Phase 6 — B-path `android_run(goal)` (no LangGraph)
 

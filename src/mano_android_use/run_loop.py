@@ -635,6 +635,9 @@ def android_run(
     """
     if new_run and hasattr(session, "begin_run"):
         session.begin_run()
+    elif hasattr(session, "note_android_run_begin"):
+        # Plan stages (new_run=False) still disarm STUCK→L0 gate.
+        session.note_android_run_begin()
     goal = (goal or "").strip()
     stuck_same_summary = resolve_stuck_same_summary(stuck_same_summary)
     tree_candidates = collect_tree_candidates(goal, tree_hints)

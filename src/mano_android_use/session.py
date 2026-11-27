@@ -24,6 +24,15 @@ from .observe_backend import (
     probe_u2,
     resolve_backend,
 )
+from .orchestration_gate import (
+    DEFAULT_L0_AFTER_STUCK_QUOTA,
+    EVENT_GATE_ARM,
+    EVENT_GATE_DISARM,
+    EVENT_L0_BLOCKED,
+    EVENT_L0_FORCE,
+    STATUS_STUCK,
+    blocked_payload,
+)
 from .safety import SafetyDecision, SafetyGateway
 from .tips import build_tips
 from .trace_report import EVENT_L0_STEP, build_step_span
@@ -63,6 +72,10 @@ class DeviceSession:
     _journal: list[dict[str, Any]] = field(default_factory=list)
     _u2: U2ObserveBackend | None = field(default=None, repr=False)
     _last_xml_ms: int = 0
+    # Phase R: Host L0 after STUCK (MCP-process local; cleared on reload).
+    last_run_status: str = ""
+    _orch_gate_armed: bool = False
+    _l0_after_stuck_remaining: int = 0
 
     @classmethod
     def open(
@@ -108,8 +121,80 @@ class DeviceSession:
         self.run_dir = run_dir
         self.step = 0
         self._journal = []
+        self.disarm_orchestration_gate(reason="begin_run")
         self.log_event({"event": "begin_run", "run_id": run_id, "run_dir": str(run_dir)})
         return {"run_id": run_id, "run_dir": str(run_dir)}
+
+    def disarm_orchestration_gate(self, *, reason: str = "") -> None:
+        """Clear STUCK→L0 arm (new android_run or non-STUCK terminal)."""
+        was = self._orch_gate_armed
+        self._orch_gate_armed = False
+        self._l0_after_stuck_remaining = 0
+        if was or reason:
+            self._log(
+                {
+                    "event": EVENT_GATE_DISARM,
+                    "reason": reason or "disarm",
+                    "was_armed": was,
+                }
+            )
+
+    def arm_orchestration_gate_after_stuck(
+        self, *, quota: int = DEFAULT_L0_AFTER_STUCK_QUOTA
+    ) -> None:
+        """Allow ``quota`` Host L0 taps after STUCK, then block."""
+        self._orch_gate_armed = True
+        self._l0_after_stuck_remaining = max(0, int(quota))
+        self.last_run_status = STATUS_STUCK
+        self._log(
+            {
+                "event": EVENT_GATE_ARM,
+                "status": STATUS_STUCK,
+                "remaining": self._l0_after_stuck_remaining,
+            }
+        )
+
+    def note_android_run_begin(self) -> None:
+        """Call at every ``android_run`` start (including ``new_run=False`` stages)."""
+        self.disarm_orchestration_gate(reason="android_run_begin")
+
+    def note_android_run_terminal(self, status: str) -> None:
+        """Arm only on STUCK; any other terminal disarms."""
+        st = (status or "").strip()
+        self.last_run_status = st
+        if st == STATUS_STUCK:
+            self.arm_orchestration_gate_after_stuck()
+        else:
+            self.disarm_orchestration_gate(reason=f"terminal:{st or 'unknown'}")
+
+    def _l0_orchestration_gate(
+        self,
+        *,
+        via: str | None,
+        force_l0: bool = False,
+        skip: bool = False,
+    ) -> dict[str, Any] | None:
+        """Return deny dict if Host L0 blocked; else None (may consume quota)."""
+        if skip or via != VIA_L0_DIRECT:
+            return None
+        if not self._orch_gate_armed:
+            return None
+        if self._l0_after_stuck_remaining > 0:
+            self._l0_after_stuck_remaining -= 1
+            self._log(
+                {
+                    "event": "l0_after_stuck_consume",
+                    "remaining": self._l0_after_stuck_remaining,
+                    "force_l0": bool(force_l0),
+                }
+            )
+            return None
+        if force_l0:
+            self._log({"event": EVENT_L0_FORCE, "remaining": 0})
+            return None
+        payload = blocked_payload(remaining=0)
+        self._log({"event": EVENT_L0_BLOCKED, **payload})
+        return payload
 
     def doctor(self) -> dict[str, Any]:
         adb_bin = find_adb()
@@ -451,14 +536,44 @@ class DeviceSession:
         )
         self._log(span)
 
-    def press(self, button: str, *, via: str | None = None) -> dict[str, Any]:
+    def press(
+        self, button: str, *, via: str | None = None, force_l0: bool = False
+    ) -> dict[str, Any]:
+        gate = self._l0_orchestration_gate(via=via, force_l0=force_l0)
+        if gate is not None:
+            return gate
         action = {"action": "system_button", "button": button.upper()}
-        return self._act(action, semantic_hint=button, via=via)
+        return self._act(
+            action,
+            semantic_hint=button,
+            via=via,
+            force_l0=force_l0,
+            skip_orch_gate=True,
+        )
 
-    def tap(self, x: int, y: int, *, semantic_hint: str = "", via: str | None = None) -> dict[str, Any]:
+    def tap(
+        self,
+        x: int,
+        y: int,
+        *,
+        semantic_hint: str = "",
+        via: str | None = None,
+        force_l0: bool = False,
+    ) -> dict[str, Any]:
+        gate = self._l0_orchestration_gate(via=via, force_l0=force_l0)
+        if gate is not None:
+            return gate
         self._refresh_ui_snapshot()
         action = {"action": "click", "coordinate": [x, y], "_pixel": True}
-        return self._act_pixels(action, x, y, semantic_hint=semantic_hint, via=via)
+        return self._act_pixels(
+            action,
+            x,
+            y,
+            semantic_hint=semantic_hint,
+            via=via,
+            force_l0=force_l0,
+            skip_orch_gate=True,
+        )
 
     def swipe(
         self,
@@ -470,7 +585,11 @@ class DeviceSession:
         duration_ms: int = 700,
         semantic_hint: str = "",
         via: str | None = None,
+        force_l0: bool = False,
     ) -> dict[str, Any]:
+        gate = self._l0_orchestration_gate(via=via, force_l0=force_l0)
+        if gate is not None:
+            return gate
         self._refresh_ui_snapshot()
         action = {
             "action": "swipe",
@@ -507,9 +626,25 @@ class DeviceSession:
             out["via"] = via
         return out
 
-    def type_text(self, text: str, *, semantic_hint: str = "", via: str | None = None) -> dict[str, Any]:
+    def type_text(
+        self,
+        text: str,
+        *,
+        semantic_hint: str = "",
+        via: str | None = None,
+        force_l0: bool = False,
+    ) -> dict[str, Any]:
+        gate = self._l0_orchestration_gate(via=via, force_l0=force_l0)
+        if gate is not None:
+            return gate
         action = {"action": "type", "text": text}
-        return self._act(action, semantic_hint=semantic_hint or text, via=via)
+        return self._act(
+            action,
+            semantic_hint=semantic_hint or text,
+            via=via,
+            force_l0=force_l0,
+            skip_orch_gate=True,
+        )
 
     def _refresh_ui_snapshot(self, *, force: bool = False) -> None:
         """XML + package before safety.
@@ -566,8 +701,19 @@ class DeviceSession:
                 self._log({"event": "size_refresh_error", "error": str(exc)[:300]})
 
     def _act(
-        self, action: dict[str, Any], *, semantic_hint: str = "", via: str | None = None
+        self,
+        action: dict[str, Any],
+        *,
+        semantic_hint: str = "",
+        via: str | None = None,
+        force_l0: bool = False,
+        skip_orch_gate: bool = False,
     ) -> dict[str, Any]:
+        gate = self._l0_orchestration_gate(
+            via=via, force_l0=force_l0, skip=skip_orch_gate
+        )
+        if gate is not None:
+            return gate
         self._refresh_ui_snapshot()
         decision = self.safety.check_action(
             action,
@@ -639,7 +785,14 @@ class DeviceSession:
         *,
         semantic_hint: str = "",
         via: str | None = None,
+        force_l0: bool = False,
+        skip_orch_gate: bool = False,
     ) -> dict[str, Any]:
+        gate = self._l0_orchestration_gate(
+            via=via, force_l0=force_l0, skip=skip_orch_gate
+        )
+        if gate is not None:
+            return gate
         decision = self.safety.check_action(
             action,
             package=self.last_package,
@@ -679,5 +832,10 @@ class DeviceSession:
         return self._journal[-n:]
 
     def log_event(self, row: dict[str, Any]) -> None:
-        """Public journal append for higher-level loops (android_run)."""
+        """Public journal append for higher-level loops (android_run).
+
+        Phase R: ``android_run_stop`` updates the STUCK→L0 orchestration gate.
+        """
         self._log(row)
+        if (row or {}).get("event") == "android_run_stop":
+            self.note_android_run_terminal(str(row.get("status") or ""))

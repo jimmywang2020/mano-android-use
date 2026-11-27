@@ -72,8 +72,15 @@ and dump thrash — **measure wall clock, not tokens**.
 | Before dual-drink **C**: `find` 可见第二杯（奶茶 **或** 菜单上另一单杯）再开 **一次** C | 为「跳过 C1」把 SKU **写死**进 slots |
 | Prefer recent observe XML for act safety (mau skips redundant `ui_dump` when fresh) | Ignore `ui_refresh_error` / force dump every L0 tap after a full observe |
 | L0 only for install dialogs / one-off「加入购物车」祖先纠偏 | 用 L0 替代换 hint 的短跑 |
+| On `L0_BLOCKED_AFTER_STUCK` (Phase R): read `next` → `find` / short `android_run`；单次纠偏用 `force_l0=true` 或配额内 1 次 | 忽略拒绝码连环 BACK/tap |
 
-Acceptance targets: dual-drink wall **≲3min** when Q1–Q3 followed; still `已添加2件`+stop-before-pay.
+**Phase R hard gate:** after `android_run` ends **`STUCK`**, Host L0 (`tap`/`swipe`/`press`/`type`) has **quota=1**; further L0 returns `L0_BLOCKED_AFTER_STUCK` unless `force_l0=true`. `TIME_BUDGET` does **not** arm the gate. `android_run` internal acts are never gated.
+
+**Enter-store once (R5):** Stage A success =「选规格」or「请输入商品名」(real menu). Store header「外送/点菜」or leftover cart「去结算」/ `cart_count` alone is **not** enter-store DONE — `find` before treating residual cart as B.
+
+**Compress Host gaps (R6):** On every return, merge `task_patch` then immediately issue the next short `android_run` from `resume.do` (or `find` once if page/SKU unclear). Avoid 15–30s think gaps and duplicate dull-hint runs. Measure **wall clock** A→D.
+
+Acceptance targets: dual-drink wall **≲3min** when Q + R5/R6 followed; still `已添加2件`+stop-before-pay. Gate alone is anti-regression, not the ≲3min lever.
 
 ### MCP soft budget + ResumeSpec (avoid Host `-32001`)
 

@@ -32,10 +32,17 @@ def main(argv: list[str] | None = None) -> int:
     p_tap = sub.add_parser("tap", help="Tap pixel coordinates")
     p_tap.add_argument("x", type=int)
     p_tap.add_argument("y", type=int)
+    p_tap.add_argument(
+        "--force-l0",
+        action="store_true",
+        help="Phase R: allow L0 after STUCK quota exhausted",
+    )
     p_type = sub.add_parser("type", help="Type text")
     p_type.add_argument("text")
+    p_type.add_argument("--force-l0", action="store_true", help="Phase R: force L0 after STUCK")
     p_press = sub.add_parser("press", help="Press BACK/HOME/ENTER")
     p_press.add_argument("button")
+    p_press.add_argument("--force-l0", action="store_true", help="Phase R: force L0 after STUCK")
     p_launch = sub.add_parser("launch", help="Cold-start package")
     p_launch.add_argument("package")
     p_prop = sub.add_parser(
@@ -288,14 +295,29 @@ def main(argv: list[str] | None = None) -> int:
         _print(session.find(args.query))
         return 0
     if args.cmd == "tap":
-        _print(session.tap(args.x, args.y))
-        return 0
+        from .apply_action import VIA_L0_DIRECT
+
+        out = session.tap(
+            args.x, args.y, via=VIA_L0_DIRECT, force_l0=bool(args.force_l0)
+        )
+        _print(out)
+        return 0 if out.get("ok", True) else 1
     if args.cmd == "type":
-        _print(session.type_text(args.text))
-        return 0
+        from .apply_action import VIA_L0_DIRECT
+
+        out = session.type_text(
+            args.text, via=VIA_L0_DIRECT, force_l0=bool(args.force_l0)
+        )
+        _print(out)
+        return 0 if out.get("ok", True) else 1
     if args.cmd == "press":
-        _print(session.press(args.button))
-        return 0
+        from .apply_action import VIA_L0_DIRECT
+
+        out = session.press(
+            args.button, via=VIA_L0_DIRECT, force_l0=bool(args.force_l0)
+        )
+        _print(out)
+        return 0 if out.get("ok", True) else 1
     if args.cmd == "launch":
         _print(session.launch(args.package))
         return 0

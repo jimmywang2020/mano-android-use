@@ -110,20 +110,40 @@ def launch_app(package: str) -> str:
 
 
 @mcp.tool()
-def tap(x: int, y: int, semantic_hint: str = "") -> str:
+def tap(x: int, y: int, semantic_hint: str = "", force_l0: bool = False) -> str:
     """L0 correction: tap pixel coordinates. Optional semantic_hint for safety.
 
     Prefer android_run / android_run_plan for multi-step goals. Use tap for install
     dialogs, known tree hits after find, or when the run loop needs a human/host nudge.
+
+    After android_run STUCK, Host L0 has quota=1 then returns L0_BLOCKED_AFTER_STUCK
+    unless force_l0=true (Phase R). Prefer find → short android_run over L0 chains.
     """
     return _dumps(
-        _session().tap(int(x), int(y), semantic_hint=semantic_hint, via=VIA_L0_DIRECT)
+        _session().tap(
+            int(x),
+            int(y),
+            semantic_hint=semantic_hint,
+            via=VIA_L0_DIRECT,
+            force_l0=bool(force_l0),
+        )
     )
 
 
 @mcp.tool()
-def swipe(x1: int, y1: int, x2: int, y2: int, duration_ms: int = 700, semantic_hint: str = "") -> str:
-    """L0 correction: swipe from (x1,y1) to (x2,y2) in pixels."""
+def swipe(
+    x1: int,
+    y1: int,
+    x2: int,
+    y2: int,
+    duration_ms: int = 700,
+    semantic_hint: str = "",
+    force_l0: bool = False,
+) -> str:
+    """L0 correction: swipe from (x1,y1) to (x2,y2) in pixels.
+
+    After STUCK, same Phase R L0 quota / force_l0 as tap.
+    """
     return _dumps(
         _session().swipe(
             int(x1),
@@ -133,22 +153,36 @@ def swipe(x1: int, y1: int, x2: int, y2: int, duration_ms: int = 700, semantic_h
             duration_ms=int(duration_ms),
             semantic_hint=semantic_hint,
             via=VIA_L0_DIRECT,
+            force_l0=bool(force_l0),
         )
     )
 
 
 @mcp.tool()
-def type_text(text: str, semantic_hint: str = "") -> str:
-    """L0 correction: type text via IME (Unicode needs AdbKeyboard)."""
+def type_text(text: str, semantic_hint: str = "", force_l0: bool = False) -> str:
+    """L0 correction: type text via IME (Unicode needs AdbKeyboard).
+
+    After STUCK, same Phase R L0 quota / force_l0 as tap.
+    """
     return _dumps(
-        _session().type_text(text, semantic_hint=semantic_hint, via=VIA_L0_DIRECT)
+        _session().type_text(
+            text,
+            semantic_hint=semantic_hint,
+            via=VIA_L0_DIRECT,
+            force_l0=bool(force_l0),
+        )
     )
 
 
 @mcp.tool()
-def press_button(button: str) -> str:
-    """L0 correction: press BACK, HOME, ENTER, or CLEAR."""
-    return _dumps(_session().press(button, via=VIA_L0_DIRECT))
+def press_button(button: str, force_l0: bool = False) -> str:
+    """L0 correction: press BACK, HOME, ENTER, or CLEAR.
+
+    After STUCK, same Phase R L0 quota / force_l0 as tap. Do not chain BACK to recover STUCK.
+    """
+    return _dumps(
+        _session().press(button, via=VIA_L0_DIRECT, force_l0=bool(force_l0))
+    )
 
 
 @mcp.tool()

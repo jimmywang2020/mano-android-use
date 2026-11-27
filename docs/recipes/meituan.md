@@ -23,13 +23,15 @@ mau 会从「已添加N件」类 a11y **建议** `progress.world.cart_count`（�
 
 ## Stages（单杯）
 
-1. **A_enter_store** — 外卖搜索进店；DONE = `选规格` / `请输入商品名` / cart chrome（**不要**裸「点菜」）
+1. **A_enter_store** — 外卖搜索进店；DONE = `选规格` / `请输入商品名`（或明确菜单列表+规格按钮）。**不要**裸「点菜」；**不要**仅凭残车 `去结算` / `cart_count≥1` 判进店成功（Phase R5）
 2. **B_add_*** — hints **SKU-first** → 选规格 → 加入购物车；`labels_any: [已添加, 去结算]`
 3. **C_verify_*** — 空 hints；`labels_all: [去结算, 已添加]` + 品名 `labels_any`
 
 ## Stages（双杯）
 
-A 进店（菜单证据）→ **A2_open_menu**（可选：外送/上滑露规格；`find` 已见选规格则 Host `on_done` 跳过）→ B 第一杯（`已添加1件`）→ C 第二杯（**换** SKU-first hints，`已添加2件`）→ D verify（`labels_all: 去结算+已添加2件`）。
+A 进店（**须菜单证据：选规格/请输入商品名**）→ **A2_open_menu**（可选：外送/上滑露规格；`find` 已见选规格则 Host `on_done` 跳过）→ B 第一杯（`已添加1件`；若残车已是本店 1 件可用 `find` 确认后跳过重加，但仍须先完成真正进店）→ C 第二杯（**换** SKU-first hints，`已添加2件`）→ D verify（`labels_all: 去结算+已添加2件`）。
+
+**进店一次到位（Phase R5）：** success_check 优先 `选规格`（或 `请输入商品名`）；店头「外送/自取/点菜」不够。残车 chrome 只证明「有车」，不证明「已在可点菜单」。
 
 **进 C 前（Phase Q3，动态 hint）：**
 
@@ -38,7 +40,9 @@ A 进店（菜单证据）→ **A2_open_menu**（可选：外送/上滑露规格
 3. 再开 **一次** `android_run`（不要先空跑一轮 STUCK 再手搓 L0）。  
 4. **禁止**把某店具体品名（如「林里招牌」）写死进 slots 只为「跳过 C1」——伤泛化。
 
-**Cursor：** 用 [`../examples/slots/meituan-dual-drink.slots.json`](../examples/slots/meituan-dual-drink.slots.json) **N×短 `android_run`**（Phase O-A）；STUCK/`TIME_BUDGET` 后 **`find`/`slot_peek` → 换 hint → 短跑**，**不要** L0 连点（Phase Q1）。不要一次 MCP `android_run_plan` 扛全程。丢包走 Phase O-B，件数以「已添加N件」为准。
+**Cursor：** 用 [`../examples/slots/meituan-dual-drink.slots.json`](../examples/slots/meituan-dual-drink.slots.json) **N×短 `android_run`**（Phase O-A）；STUCK/`TIME_BUDGET` 后 **`find`/`slot_peek` → 换 hint → 短跑**，**不要** L0 连点（Phase Q1/R）。若返回 `L0_BLOCKED_AFTER_STUCK`：跟 `next`，或 `force_l0=true` 单次纠偏。不要一次 MCP `android_run_plan` 扛全程。丢包走 Phase O-B，件数以「已添加N件」为准。
+
+**压缩编排 gap（Phase R6）：** 收到 `task_patch`/`continue_hint` 后立刻填下一短跑；`find` 仅在换页/换杯时用；禁止同 dull-hint 再开一轮空转。墙钟目标 ≲3min（对标 Q4r2 ~297s）。
 
 ## Host SlotSpec（推荐）
 
